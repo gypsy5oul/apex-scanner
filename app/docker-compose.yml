@@ -1,0 +1,293 @@
+version: "3.8"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: fastapi_scanner
+    ports:
+      - "${SCANNER_PORT:-7070}:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - TZ=Asia/Kolkata
+      - REDIS_URL=redis://redis:6379/0
+      - SERVER_HOST=${SERVER_HOST:-http://10.0.2.121:7070}
+      - SCAN_TIMEOUT=${SCAN_TIMEOUT:-900}
+      - SCAN_RESULT_TTL=${SCAN_RESULT_TTL:-2592000}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENABLE_METRICS=true
+      # Admin Authentication
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-scanner@admin}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-change-in-production}
+      - JWT_EXPIRATION_HOURS=${JWT_EXPIRATION_HOURS:-24}
+    volumes:
+      - /opt/scanner-reports:/var/www/html/reports
+      - /opt/scanner-sboms:/var/www/html/sboms
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Primary worker for high-priority scans (single image scans)
+  worker-high:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    command: >
+      celery -A app.tasks.celery worker
+      --loglevel=info
+      --concurrency=${WORKER_HIGH_CONCURRENCY:-4}
+      --queues=high_priority,default
+      --hostname=worker-high@%h
+      --max-tasks-per-child=50
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - TZ=Asia/Kolkata
+      - REDIS_URL=redis://redis:6379/0
+      - SERVER_HOST=${SERVER_HOST:-http://10.0.2.121:7070}
+      - SCAN_TIMEOUT=${SCAN_TIMEOUT:-900}
+      - SCAN_RESULT_TTL=${SCAN_RESULT_TTL:-2592000}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - WORKER_TYPE=high_priority
+    volumes:
+      - /opt/scanner-reports:/var/www/html/reports
+      - /opt/scanner-sboms:/var/www/html/sboms
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  # Batch workers for batch/scheduled scans (can be scaled)
+  worker-batch:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    command: >
+      celery -A app.tasks.celery worker
+      --loglevel=info
+      --concurrency=${WORKER_BATCH_CONCURRENCY:-6}
+      --queues=batch,low_priority,default
+      --hostname=worker-batch@%h
+      --max-tasks-per-child=100
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - TZ=Asia/Kolkata
+      - REDIS_URL=redis://redis:6379/0
+      - SERVER_HOST=${SERVER_HOST:-http://10.0.2.121:7070}
+      - SCAN_TIMEOUT=${SCAN_TIMEOUT:-900}
+      - SCAN_RESULT_TTL=${SCAN_RESULT_TTL:-2592000}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - WORKER_TYPE=batch
+    volumes:
+      - /opt/scanner-reports:/var/www/html/reports
+      - /opt/scanner-sboms:/var/www/html/sboms
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    deploy:
+      mode: replicated
+      replicas: ${BATCH_WORKER_REPLICAS:-2}
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  # Dedicated worker for system tasks (DB updates, status checks)
+  worker-system:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    command: >
+      celery -A app.tasks.celery worker
+      --loglevel=info
+      --concurrency=2
+      --queues=system
+      --hostname=worker-system@%h
+      --max-tasks-per-child=200
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - TZ=Asia/Kolkata
+      - REDIS_URL=redis://redis:6379/0
+      - SERVER_HOST=${SERVER_HOST:-http://10.0.2.121:7070}
+      - SCAN_TIMEOUT=${SCAN_TIMEOUT:-900}
+      - SCAN_RESULT_TTL=${SCAN_RESULT_TTL:-2592000}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - WORKER_TYPE=system
+    volumes:
+      - /opt/scanner-reports:/var/www/html/reports
+      - /opt/scanner-sboms:/var/www/html/sboms
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: celery_beat
+    command: ["celery", "-A", "app.tasks.celery", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      worker-high:
+        condition: service_started
+    environment:
+      - TZ=Asia/Kolkata
+      - REDIS_URL=redis://redis:6379/0
+      - SERVER_HOST=${SERVER_HOST:-http://10.0.2.121:7070}
+      - SCAN_TIMEOUT=${SCAN_TIMEOUT:-900}
+      - SCAN_RESULT_TTL=${SCAN_RESULT_TTL:-2592000}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    restart: unless-stopped
+
+  # Auto-scaler service - monitors queue and scales workers
+  autoscaler:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: worker_autoscaler
+    command: ["python", "-m", "app.autoscaler"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - TZ=Asia/Kolkata
+      - REDIS_URL=redis://redis:6379/0
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - MIN_WORKERS=${MIN_WORKERS:-2}
+      - MAX_WORKERS=${MAX_WORKERS:-10}
+      - SCALE_UP_THRESHOLD=${SCALE_UP_THRESHOLD:-10}
+      - SCALE_DOWN_THRESHOLD=${SCALE_DOWN_THRESHOLD:-2}
+      - CHECK_INTERVAL=${AUTOSCALE_CHECK_INTERVAL:-30}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  # Flower - Celery monitoring dashboard
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: celery_flower
+    command: >
+      celery -A app.tasks.celery flower
+      --port=5555
+      --broker=redis://redis:6379/0
+      --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-scanner123}
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - TZ=Asia/Kolkata
+      - REDIS_URL=redis://redis:6379/0
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  redis:
+    image: "redis:7-alpine"
+    container_name: redis_cache
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --save 900 1
+      --save 300 10
+      --save 60 100
+      --maxmemory ${REDIS_MAX_MEMORY:-2gb}
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 300
+      --timeout 0
+      --tcp-backlog 511
+      --maxclients 10000
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2.5G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  dashboard:
+    build:
+      context: ../dashboard
+      dockerfile: Dockerfile
+    container_name: scanner_dashboard
+    ports:
+      - "${DASHBOARD_PORT:-3001}:80"
+    depends_on:
+      - api
+    environment:
+      - TZ=Asia/Kolkata
+      - REACT_APP_API_URL=http://localhost:7070
+    restart: unless-stopped
+
+networks:
+  default:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local

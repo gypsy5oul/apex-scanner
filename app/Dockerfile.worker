@@ -1,0 +1,76 @@
+# Base Image
+FROM python:3.9
+
+# Set working directory
+WORKDIR /app
+
+# Copy application code
+COPY . /app
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install scanner binaries with retry logic and fallback
+RUN set -e; \
+    # Function to download with retries
+    download_with_retry() { \
+        url=$1; \
+        output=$2; \
+        max_attempts=3; \
+        attempt=1; \
+        while [ $attempt -le $max_attempts ]; do \
+            echo "Attempt $attempt of $max_attempts: Downloading $url"; \
+            if curl -sSfL -o "$output" "$url" 2>/dev/null; then \
+                echo "Successfully downloaded $url"; \
+                return 0; \
+            fi; \
+            echo "Download failed, retrying..."; \
+            sleep 5; \
+            attempt=$((attempt + 1)); \
+        done; \
+        echo "Failed to download $url after $max_attempts attempts"; \
+        return 1; \
+    }; \
+    \
+    # Install Grype
+    echo "Installing Grype v0.104.2..."; \
+    download_with_retry \
+        "https://github.com/anchore/grype/releases/download/v0.104.2/grype_0.104.2_linux_amd64.tar.gz" \
+        "/tmp/grype.tar.gz" && \
+    tar -xzf /tmp/grype.tar.gz -C /usr/local/bin grype && \
+    chmod +x /usr/local/bin/grype && \
+    rm /tmp/grype.tar.gz && \
+    echo "Grype installed successfully" && \
+    \
+    # Install Trivy
+    echo "Installing Trivy v0.68.1..."; \
+    download_with_retry \
+        "https://github.com/aquasecurity/trivy/releases/download/v0.68.1/trivy_0.68.1_Linux-64bit.tar.gz" \
+        "/tmp/trivy.tar.gz" && \
+    tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy && \
+    chmod +x /usr/local/bin/trivy && \
+    rm /tmp/trivy.tar.gz && \
+    echo "Trivy installed successfully" && \
+    \
+    # Install Syft
+    echo "Installing Syft v1.38.2..."; \
+    download_with_retry \
+        "https://github.com/anchore/syft/releases/download/v1.38.2/syft_1.38.2_linux_amd64.tar.gz" \
+        "/tmp/syft.tar.gz" && \
+    tar -xzf /tmp/syft.tar.gz -C /usr/local/bin syft && \
+    chmod +x /usr/local/bin/syft && \
+    rm /tmp/syft.tar.gz && \
+    echo "Syft installed successfully" || \
+    (echo "WARNING: Syft installation failed, but continuing..." && exit 0)
+
+# Ensure reports and sbom directories exist
+RUN mkdir -p /var/www/html/reports /var/www/html/sboms && chmod -R 755 /var/www/html/reports /var/www/html/sboms
+
+# Verify installations
+RUN grype version && trivy --version && syft version
+
+# Expose relevant ports (not required for worker, but useful for debugging)
+EXPOSE 8000
+
+# Start Celery Worker
+CMD ["celery", "-A", "app.tasks.celery", "worker", "--loglevel=info"]

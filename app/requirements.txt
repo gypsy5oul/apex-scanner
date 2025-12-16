@@ -1,0 +1,56 @@
+# FastAPI and ASGI server
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+gunicorn==21.2.0
+websockets==12.0
+
+# Task queue
+celery==5.3.6
+redis==5.0.1
+
+# Async Redis for WebSocket
+redis[hiredis]>=5.0.1
+
+# Templating
+jinja2==3.1.3
+
+# Environment and HTTP
+python-dotenv==1.0.0
+requests==2.31.0
+
+# Structured logging
+structlog==24.1.0
+python-json-logger==2.0.7
+
+# Prometheus metrics
+prometheus-client==0.19.0
+prometheus-fastapi-instrumentator==6.1.0
+
+# Pydantic (explicit v2)
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Async support
+httpx==0.26.0
+aiofiles==23.2.1
+
+# Date/time handling
+python-dateutil==2.8.2
+
+# PDF Generation
+reportlab==4.1.0
+
+# Celery Beat for scheduled tasks
+celery[redis]==5.3.6
+
+# Docker SDK for autoscaler
+docker==7.0.0
+
+# Kombu for advanced queue configuration
+kombu==5.3.4
+
+# Flower for Celery monitoring
+flower==2.0.1
+
+# JWT Authentication
+PyJWT==2.8.0

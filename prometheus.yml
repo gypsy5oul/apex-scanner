@@ -1,0 +1,36 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'scanner-cluster'
+    environment: 'production'
+
+scrape_configs:
+  # Scanner API metrics (custom metrics + FastAPI instrumentation)
+  - job_name: 'scanner-api'
+    static_configs:
+      - targets: ['api:8000']
+        labels:
+          service: 'scanner-api'
+    metrics_path: /metrics
+    scrape_interval: 10s
+
+  # Redis metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+        labels:
+          service: 'redis'
+
+  # NGINX metrics
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx:80']
+        labels:
+          service: 'nginx'
+    metrics_path: '/nginx_status'
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
