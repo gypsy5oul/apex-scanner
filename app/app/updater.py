@@ -7,7 +7,6 @@ where tools are installed. Results are stored in Redis and read by the API.
 """
 import subprocess
 import json
-import redis
 import httpx
 import os
 import re
@@ -15,21 +14,10 @@ from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 
-from app.config import settings
+from app.config import settings, get_redis_client
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
-
-# Redis connection
-redis_pool = redis.ConnectionPool.from_url(
-    settings.REDIS_URL,
-    max_connections=10,
-    decode_responses=True
-)
-
-
-def get_redis_client() -> redis.Redis:
-    return redis.Redis(connection_pool=redis_pool)
 
 
 # Redis keys for caching tool/db status

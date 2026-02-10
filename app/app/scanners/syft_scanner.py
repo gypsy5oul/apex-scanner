@@ -47,8 +47,7 @@ class SyftScanner(BaseScanner):
                 command = [
                     "syft",
                     image_name,
-                    "-o", fmt,
-                    "--file", output_path
+                    "-o", f"{fmt}={output_path}"
                 ]
 
                 result = subprocess.run(

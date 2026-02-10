@@ -6,16 +6,17 @@ import os
 import json
 import uuid
 import re
-import redis
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Query, Path, Body
+from fastapi import APIRouter, HTTPException, Query, Path, Body, Depends
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel, Field, field_validator
 from enum import Enum
+import redis
 
 from app.tasks import scan_image, batch_scan_images
-from app.config import settings
+from app.config import settings, get_redis_client
+from app.auth import get_current_user, TokenData
 from app.logging_config import get_logger, LogContext
 from app.metrics import (
     SCANS_TOTAL, SCANS_IN_PROGRESS, BATCH_SCANS_TOTAL, BATCH_SIZE,
@@ -25,16 +26,8 @@ from app.metrics import (
 # Configure structured logger
 logger = get_logger(__name__)
 
-# Redis connection pool for better performance
-redis_pool = redis.ConnectionPool.from_url(
-    settings.REDIS_URL,
-    max_connections=settings.REDIS_MAX_CONNECTIONS,
-    decode_responses=True
-)
-
-def get_redis_client() -> redis.Redis:
-    """Get Redis client from connection pool"""
-    return redis.Redis(connection_pool=redis_pool)
+# UUID format validation pattern for scan_id parameters
+UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 
 
 def scan_redis_keys(redis_client: redis.Redis, pattern: str, count: int = 100) -> list:
@@ -396,13 +389,48 @@ def parse_scan_result(scan_id: str, result: Dict[str, str]) -> EnhancedScanResul
     and generates SBOM using Syft.
     """
 )
-async def start_scan(request: ScanRequest = Body(...)):
+async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depends(get_current_user)):
     """Start a new multi-scanner security analysis"""
     redis_client = get_redis_client()
 
     with LogContext(image=request.image_name, operation="start_scan"):
         try:
+            # === DEDUPLICATION CHECK ===
+            # Check if a scan for this image is already in progress or recently completed
+            dedup_key = f"scan_dedup:{request.image_name}"
+            existing_scan_id = redis_client.get(dedup_key)
+
+            if existing_scan_id:
+                # Verify the existing scan is still valid
+                existing_status = redis_client.hget(existing_scan_id, "status")
+                if existing_status == "in_progress":
+                    logger.info(
+                        "Returning existing in-progress scan (deduplication)",
+                        scan_id=existing_scan_id,
+                        image=request.image_name
+                    )
+                    return ScanResponse(
+                        scan_id=existing_scan_id,
+                        status=ScanStatus.IN_PROGRESS,
+                        message="Scan already in progress for this image"
+                    )
+                elif existing_status == "completed":
+                    logger.info(
+                        "Returning recently completed scan (deduplication)",
+                        scan_id=existing_scan_id,
+                        image=request.image_name
+                    )
+                    return ScanResponse(
+                        scan_id=existing_scan_id,
+                        status=ScanStatus.COMPLETED,
+                        message="Scan recently completed for this image"
+                    )
+                # If status is failed or missing, allow new scan
+
             scan_id = str(uuid.uuid4())
+
+            # Set deduplication key (expires in 10 minutes to prevent rapid re-scans)
+            redis_client.setex(dedup_key, 600, scan_id)
 
             logger.info(
                 "Initiating scan",
@@ -472,7 +500,7 @@ async def start_scan(request: ScanRequest = Body(...)):
     summary="Start Batch Scan for Multiple Images",
     description="Initiate scanning for multiple Docker images in a single request"
 )
-async def start_batch_scan(request: BatchScanRequest = Body(...)):
+async def start_batch_scan(request: BatchScanRequest = Body(...), _user: TokenData = Depends(get_current_user)):
     """Start batch scanning for multiple images"""
     redis_client = get_redis_client()
 
@@ -568,7 +596,7 @@ async def start_batch_scan(request: BatchScanRequest = Body(...)):
     summary="Get Batch Scan Status",
     description="Retrieve status and results for all scans in a batch"
 )
-async def get_batch_status(batch_id: str = Path(..., description="Batch ID")):
+async def get_batch_status(batch_id: str = Path(..., description="Batch ID", pattern=UUID_PATTERN), _user: TokenData = Depends(get_current_user)):
     """Get status of a batch scan"""
     redis_client = get_redis_client()
 
@@ -625,7 +653,8 @@ async def get_batch_status(batch_id: str = Path(..., description="Batch ID")):
     summary="Get Multi-Scanner Scan Results"
 )
 async def get_scan_result(
-    scan_id: str = Path(..., description="Unique identifier of the scan")
+    scan_id: str = Path(..., description="Unique identifier of the scan", pattern=UUID_PATTERN),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Fetch enhanced scan results with multi-scanner data"""
     redis_client = get_redis_client()
@@ -653,8 +682,9 @@ async def get_scan_result(
     description="Compare vulnerabilities between two scans to see what's new, fixed, or unchanged"
 )
 async def compare_scans(
-    scan_id_1: str = Path(..., description="First scan ID"),
-    scan_id_2: str = Path(..., description="Second scan ID (usually newer)")
+    scan_id_1: str = Path(..., description="First scan ID", pattern=UUID_PATTERN),
+    scan_id_2: str = Path(..., description="Second scan ID (usually newer)", pattern=UUID_PATTERN),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Compare vulnerabilities between two scans"""
     redis_client = get_redis_client()
@@ -736,7 +766,8 @@ async def search_vulnerabilities(
     severity: Optional[VulnerabilitySeverity] = Query(None, description="Severity level"),
     image: Optional[str] = Query(None, description="Image name filter"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
-    offset: int = Query(0, ge=0, description="Result offset")
+    offset: int = Query(0, ge=0, description="Result offset"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Search for vulnerabilities across all scans"""
     redis_client = get_redis_client()
@@ -838,7 +869,8 @@ async def search_vulnerabilities(
 )
 async def get_image_history(
     image_name: str = Path(..., description="Docker image name"),
-    limit: int = Query(20, ge=1, le=100, description="Maximum history entries")
+    limit: int = Query(20, ge=1, le=100, description="Maximum history entries"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get scan history for a specific image"""
     redis_client = get_redis_client()
@@ -912,7 +944,7 @@ async def get_image_history(
     },
     summary="Get HTML Report URL"
 )
-async def get_report(scan_id: str = Path(..., description="Scan ID")):
+async def get_report(scan_id: str = Path(..., description="Scan ID", pattern=UUID_PATTERN), _user: TokenData = Depends(get_current_user)):
     """Get the URL for a scan's HTML report"""
     report_path = f"{settings.REPORTS_DIR}/{scan_id}.html"
     if not os.path.exists(report_path):
@@ -932,7 +964,7 @@ async def get_report(scan_id: str = Path(..., description="Scan ID")):
     },
     summary="Get SBOM Information"
 )
-async def get_sbom_info(scan_id: str = Path(..., description="Scan ID")):
+async def get_sbom_info(scan_id: str = Path(..., description="Scan ID", pattern=UUID_PATTERN), _user: TokenData = Depends(get_current_user)):
     """Get SBOM information and available formats"""
     sbom_files = {}
     for fmt in ["spdx-json", "cyclonedx-json", "syft-json"]:
@@ -964,8 +996,9 @@ async def get_sbom_info(scan_id: str = Path(..., description="Scan ID")):
     summary="Download SBOM File"
 )
 async def download_sbom(
-    scan_id: str = Path(..., description="Scan ID"),
-    format: SBOMFormat = Path(..., description="SBOM format")
+    scan_id: str = Path(..., description="Scan ID", pattern=UUID_PATTERN),
+    format: SBOMFormat = Path(..., description="SBOM format"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Download SBOM file in specified format"""
     file_name = f"{scan_id}_{format.value.replace('-', '_')}.json"
@@ -987,7 +1020,8 @@ async def download_sbom(
     description="Get a list of recent scans across all images"
 )
 async def get_recent_scans(
-    limit: int = Query(5, ge=1, le=50, description="Number of recent scans to return")
+    limit: int = Query(5, ge=1, le=50, description="Number of recent scans to return"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get recent scans for dashboard display"""
     redis_client = get_redis_client()
@@ -1052,7 +1086,7 @@ async def get_recent_scans(
     summary="Get Scanner Statistics",
     description="Get overall statistics about scans, vulnerabilities, and system health"
 )
-async def get_stats():
+async def get_stats(_user: TokenData = Depends(get_current_user)):
     """Get scanner statistics"""
     redis_client = get_redis_client()
 
@@ -1079,7 +1113,7 @@ async def get_stats():
     response_model=Dict,
     summary="API Information"
 )
-async def get_api_info():
+async def get_api_info(_user: TokenData = Depends(get_current_user)):
     """Get comprehensive API documentation"""
     return {
         "api_version": "2.1",

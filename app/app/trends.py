@@ -3,26 +3,14 @@ Vulnerability Trends Analysis
 Track and analyze vulnerability trends over time
 """
 import json
-import redis
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from collections import defaultdict
 
-from app.config import settings
+from app.config import settings, get_redis_client
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
-
-# Redis connection
-redis_pool = redis.ConnectionPool.from_url(
-    settings.REDIS_URL,
-    max_connections=10,
-    decode_responses=True
-)
-
-
-def get_redis_client() -> redis.Redis:
-    return redis.Redis(connection_pool=redis_pool)
 
 
 def scan_redis_keys(redis_client: redis.Redis, pattern: str, count: int = 100) -> list:

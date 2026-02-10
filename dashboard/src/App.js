@@ -19,6 +19,8 @@ import BaseImages from './pages/BaseImages';
 import BaseImageDetail from './pages/BaseImageDetail';
 import SystemStatus from './pages/SystemStatus';
 import WorkerMonitor from './pages/WorkerMonitor';
+import IacScan from './pages/IacScan';
+import Policies from './pages/Policies';
 
 const drawerWidth = 280;
 
@@ -79,6 +81,8 @@ function AppRoutes() {
         <Route path="/compare" element={<Compare />} />
         <Route path="/search" element={<Search />} />
         <Route path="/trends" element={<Trends />} />
+        <Route path="/iac-scan" element={<IacScan />} />
+        <Route path="/policies" element={<Policies />} />
 
         {/* Protected Admin Routes */}
         <Route path="/schedules" element={

@@ -5,14 +5,12 @@ Monitors queue depth and scales workers up/down based on demand
 import os
 import time
 import json
-import redis
 import docker
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
 
-# Configuration from environment
-REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379/0')
+from app.config import settings, get_redis_client
 MIN_WORKERS = int(os.getenv('MIN_WORKERS', '2'))
 MAX_WORKERS = int(os.getenv('MAX_WORKERS', '10'))
 SCALE_UP_THRESHOLD = int(os.getenv('SCALE_UP_THRESHOLD', '10'))  # Tasks in queue to trigger scale up
@@ -62,7 +60,7 @@ class AutoScaler:
     """
 
     def __init__(self):
-        self.redis = redis.from_url(REDIS_URL, decode_responses=True)
+        self.redis = get_redis_client()
         self.docker_client = None
         self.last_scale_time = 0
         self.scaling_history: List[ScalingDecision] = []

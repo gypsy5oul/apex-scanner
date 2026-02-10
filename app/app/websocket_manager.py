@@ -41,7 +41,7 @@ class ConnectionManager:
         # Global subscribers (for dashboard)
         self.global_subscribers: Set[WebSocket] = set()
         # Redis pub/sub for distributed updates
-        self.redis_url = settings.REDIS_URL
+        self.redis_url = settings.effective_redis_url
 
     async def connect(self, websocket: WebSocket, scan_id: Optional[str] = None):
         """Accept a new WebSocket connection"""
@@ -226,7 +226,7 @@ class RedisPubSubManager:
     CHANNEL = "scan_progress"
 
     def __init__(self):
-        self.redis_url = settings.REDIS_URL
+        self.redis_url = settings.effective_redis_url
         self._pubsub = None
         self._redis = None
 
@@ -269,10 +269,10 @@ def publish_progress_sync(
     details: Optional[Dict[str, Any]] = None
 ):
     """Synchronous progress publisher for Celery tasks"""
-    import redis
+    from app.config import get_redis_client as _get_redis
 
     try:
-        r = redis.Redis.from_url(settings.REDIS_URL)
+        r = _get_redis()
         update = {
             "scan_id": scan_id,
             "step": step,

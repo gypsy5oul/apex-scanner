@@ -4,28 +4,16 @@ Provides detailed CVSS v3.1 scoring with attack vector analysis
 """
 import json
 import httpx
-import redis
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
 import asyncio
 import re
 
-from app.config import settings
+from app.config import settings, get_redis_client
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
-
-# Redis for caching CVSS data
-redis_pool = redis.ConnectionPool.from_url(
-    settings.REDIS_URL,
-    max_connections=10,
-    decode_responses=True
-)
-
-
-def get_redis_client() -> redis.Redis:
-    return redis.Redis(connection_pool=redis_pool)
 
 
 @dataclass

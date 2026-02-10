@@ -31,35 +31,34 @@ const apiV2 = axios.create({
   },
 });
 
-// Add auth header interceptor for apiV2 (admin endpoints)
-apiV2.interceptors.request.use(
-  (config) => {
-    const token = getAuthToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
+// Auth header interceptor - shared for both v1 and v2
+const addAuthHeader = (config) => {
+  const token = getAuthToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
   }
-);
+  return config;
+};
+
+const onRequestError = (error) => Promise.reject(error);
 
 // Handle 401 errors (redirect to login)
-apiV2.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      // Clear token and redirect to login
-      localStorage.removeItem('auth_token');
-      // Only redirect if not already on login page
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
-      }
+const on401Response = (error) => {
+  if (error.response?.status === 401) {
+    localStorage.removeItem('auth_token');
+    if (window.location.pathname !== '/login') {
+      window.location.href = '/login';
     }
-    return Promise.reject(error);
   }
-);
+  return Promise.reject(error);
+};
+
+// Add auth interceptors to BOTH v1 and v2 (all endpoints now require auth)
+api.interceptors.request.use(addAuthHeader, onRequestError);
+api.interceptors.response.use((response) => response, on401Response);
+
+apiV2.interceptors.request.use(addAuthHeader, onRequestError);
+apiV2.interceptors.response.use((response) => response, on401Response);
 
 // ============ V1 Endpoints ============
 
@@ -224,6 +223,14 @@ export const purgeQueue = (queueName) =>
   apiV2.delete(`/workers/queues/${queueName}`);
 export const getWorkersHealth = () =>
   apiV2.get('/workers/health');
+
+// API Key Management
+export const createApiKey = (name, expiresDays = 365) =>
+  apiV2.post('/api-keys', { name, expires_days: expiresDays });
+export const listApiKeys = () =>
+  apiV2.get('/api-keys');
+export const revokeApiKey = (keyId) =>
+  apiV2.delete(`/api-keys/${keyId}`);
 
 // WebSocket URL
 export const getWsUrl = (scanId) => {

@@ -9,7 +9,8 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.routes import router
 from app.routes_v2 import router_v2
-from app.config import settings
+from app.config import settings, get_redis_client
+from app.auth import validate_credentials_or_die
 from app.logging_config import configure_logging, get_logger
 
 # Configure structured logging
@@ -62,14 +63,19 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Add CORS middleware - explicit origins only (no wildcard)
+_cors_origins = settings.cors_origins_list
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-API-Key"],
+    )
+    logger.info("CORS enabled", origins=_cors_origins)
+else:
+    logger.warning("CORS_ORIGINS not set - CORS middleware disabled. Set CORS_ORIGINS for cross-origin access.")
 
 # Setup Prometheus metrics instrumentation
 if settings.ENABLE_METRICS:
@@ -146,8 +152,6 @@ async def health_check():
 @app.get("/health", tags=["health"])
 async def detailed_health():
     """Detailed health check for monitoring"""
-    import redis
-
     health_status = {
         "status": "healthy",
         "components": {}
@@ -155,8 +159,8 @@ async def detailed_health():
 
     # Check Redis connectivity
     try:
-        redis_client = redis.Redis.from_url(settings.REDIS_URL)
-        redis_client.ping()
+        r = get_redis_client()
+        r.ping()
         health_status["components"]["redis"] = {"status": "healthy"}
     except Exception as e:
         health_status["components"]["redis"] = {"status": "unhealthy", "error": str(e)}
@@ -178,6 +182,9 @@ async def detailed_health():
 @app.on_event("startup")
 async def startup_event():
     """Application startup tasks"""
+    # SECURITY: Refuse to start with insecure default credentials
+    validate_credentials_or_die()
+
     logger.info(
         "Apex Scanner starting",
         version="3.0",

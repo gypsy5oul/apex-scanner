@@ -69,6 +69,11 @@ RUN mkdir -p /var/www/html/reports /var/www/html/sboms && chmod -R 755 /var/www/
 # Verify installations
 RUN grype version && trivy --version && syft version
 
+# Pre-download scanner DBs at build time to avoid download failures at runtime
+RUN trivy image --download-db-only --db-repository ghcr.io/aquasecurity/trivy-db:2
+RUN trivy image --download-java-db-only --java-db-repository ghcr.io/aquasecurity/trivy-java-db:1
+RUN grype db update
+
 # Expose relevant ports (not required for worker, but useful for debugging)
 EXPOSE 8000
 

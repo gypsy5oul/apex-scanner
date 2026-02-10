@@ -29,11 +29,14 @@ import GroupWorkIcon from '@mui/icons-material/GroupWork';
 import LoginIcon from '@mui/icons-material/Login';
 import LogoutIcon from '@mui/icons-material/Logout';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import SecurityIcon from '@mui/icons-material/Security';
+import PolicyIcon from '@mui/icons-material/Policy';
 import { useAuth } from '../context/AuthContext';
 
 const mainMenuItems = [
   { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
   { text: 'New Scan', icon: <ScannerIcon />, path: '/scan' },
+  { text: 'IaC Scan', icon: <SecurityIcon />, path: '/iac-scan' },
   { text: 'Batch Scan', icon: <BatchIcon />, path: '/batch' },
   { text: 'Scan History', icon: <HistoryIcon />, path: '/history' },
 ];
@@ -42,6 +45,7 @@ const analysisMenuItems = [
   { text: 'Compare Scans', icon: <CompareIcon />, path: '/compare' },
   { text: 'Search CVEs', icon: <BugReportIcon />, path: '/search' },
   { text: 'Trends', icon: <TrendingUpIcon />, path: '/trends' },
+  { text: 'Policies', icon: <PolicyIcon />, path: '/policies' },
 ];
 
 const enterpriseMenuItems = [

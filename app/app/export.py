@@ -5,7 +5,6 @@ Includes executive summary PDF generation
 import io
 import csv
 import json
-import redis
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from reportlab.lib import colors
@@ -21,21 +20,10 @@ from reportlab.graphics.charts.piecharts import Pie
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
-from app.config import settings
+from app.config import settings, get_redis_client
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
-
-# Redis connection
-redis_pool = redis.ConnectionPool.from_url(
-    settings.REDIS_URL,
-    max_connections=10,
-    decode_responses=True
-)
-
-
-def get_redis_client() -> redis.Redis:
-    return redis.Redis(connection_pool=redis_pool)
 
 
 class ReportExporter:

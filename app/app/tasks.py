@@ -4,13 +4,12 @@ Includes batch scanning, metrics, and structured logging
 """
 import os
 import json
-import redis
 import traceback
 from celery import Celery, group
 from datetime import datetime
 from typing import List, Dict, Any
 
-from app.config import settings
+from app.config import settings, get_redis_client
 from app.scanners.orchestrator import ScannerOrchestrator
 from app.logging_config import get_logger, configure_logging, LogContext
 from app.metrics import (
@@ -37,24 +36,11 @@ configure_logging(
 )
 logger = get_logger(__name__)
 
-# Initialize Redis client with connection pool
-redis_pool = redis.ConnectionPool.from_url(
-    settings.REDIS_URL,
-    max_connections=settings.REDIS_MAX_CONNECTIONS,
-    decode_responses=True
-)
-
-
-def get_redis_client() -> redis.Redis:
-    """Get Redis client from connection pool"""
-    return redis.Redis(connection_pool=redis_pool)
-
-
-# Initialize Celery with enhanced configuration
+# Initialize Celery with authenticated Redis URL
 celery = Celery(
     "scanner",
-    broker=settings.REDIS_URL,
-    backend=settings.REDIS_URL
+    broker=settings.effective_redis_url,
+    backend=settings.effective_redis_url
 )
 
 # Define task queues with priorities
@@ -109,6 +95,7 @@ celery.conf.update(
         'update_vulnerability_databases': {'queue': 'system', 'routing_key': 'system'},
         'check_system_status': {'queue': 'system', 'routing_key': 'system'},
         'update_kev_database': {'queue': 'system', 'routing_key': 'system'},
+        'cleanup_old_scan_artifacts': {'queue': 'system', 'routing_key': 'system'},
     },
 
     # Result backend settings
@@ -124,6 +111,22 @@ celery.conf.update(
         'fanout_patterns': True,
     },
 )
+
+# Configure Redis TLS for Celery broker/backend if enabled
+if settings.REDIS_TLS_ENABLED:
+    _ssl_conf = {
+        "ssl_cert_reqs": "required",
+    }
+    if settings.REDIS_TLS_CA_PATH:
+        _ssl_conf["ssl_ca_certs"] = settings.REDIS_TLS_CA_PATH
+    if settings.REDIS_TLS_CERT_PATH:
+        _ssl_conf["ssl_certfile"] = settings.REDIS_TLS_CERT_PATH
+    if settings.REDIS_TLS_KEY_PATH:
+        _ssl_conf["ssl_keyfile"] = settings.REDIS_TLS_KEY_PATH
+    celery.conf.update(
+        broker_use_ssl=_ssl_conf,
+        redis_backend_use_ssl=_ssl_conf,
+    )
 
 # Setup Jinja2 environment
 env = Environment(
@@ -992,6 +995,11 @@ celery.conf.beat_schedule = {
         'schedule': 21600.0,  # Every 6 hours (in seconds)
         'options': {'queue': 'system'}  # Must match task_routes config
     },
+    'cleanup-old-scan-artifacts': {
+        'task': 'cleanup_old_scan_artifacts',
+        'schedule': 86400.0,  # Every 24 hours (in seconds)
+        'options': {'queue': 'system'}
+    },
 }
 celery.conf.timezone = 'UTC'
 
@@ -1119,3 +1127,196 @@ def update_kev_database(self) -> Dict[str, Any]:
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
+
+
+# ============== Artifact Cleanup Task ==============
+
+@celery.task(bind=True, name='cleanup_old_scan_artifacts')
+def cleanup_old_scan_artifacts(self) -> Dict[str, Any]:
+    """
+    Celery task to clean up old SBOM files and HTML reports.
+    Removes files older than ARTIFACT_RETENTION_DAYS (default 7 days).
+    Runs daily via beat schedule.
+    """
+    import glob
+    import time
+
+    retention_days = settings.ARTIFACT_RETENTION_DAYS
+    cutoff_time = time.time() - (retention_days * 86400)
+
+    logger.info(
+        "Starting scan artifact cleanup",
+        retention_days=retention_days
+    )
+
+    deleted = {"reports": 0, "sboms": 0, "errors": 0}
+
+    for label, directory in [("reports", settings.REPORTS_DIR), ("sboms", settings.SBOMS_DIR)]:
+        if not os.path.isdir(directory):
+            continue
+        for filepath in glob.glob(os.path.join(directory, "*")):
+            try:
+                if os.path.isfile(filepath) and os.path.getmtime(filepath) < cutoff_time:
+                    os.remove(filepath)
+                    deleted[label] += 1
+            except OSError as e:
+                logger.warning(
+                    "Failed to delete artifact",
+                    path=filepath,
+                    error=str(e)
+                )
+                deleted["errors"] += 1
+
+    logger.info(
+        "Artifact cleanup completed",
+        deleted_reports=deleted["reports"],
+        deleted_sboms=deleted["sboms"],
+        errors=deleted["errors"]
+    )
+
+    return {
+        "status": "completed",
+        "retention_days": retention_days,
+        "deleted": deleted,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# ============== IaC Scanning Task ==============
+
+@celery.task(bind=True, name='scan_iac_content', queue='default')
+def scan_iac_content(self, content: str, filename: str = "Dockerfile") -> Dict[str, Any]:
+    """
+    Celery task to scan IaC content for misconfigurations using Trivy.
+    Runs on worker which has Trivy installed.
+    """
+    import subprocess
+    import tempfile
+    import shutil
+    import uuid
+
+    scan_id = str(uuid.uuid4())
+    logger.info(f"Starting IaC scan {scan_id} for {filename}")
+
+    try:
+        # Create temp directory
+        scan_dir = tempfile.mkdtemp(prefix="iac_scan_")
+        file_path = os.path.join(scan_dir, filename)
+
+        # Write content to file
+        with open(file_path, 'w') as f:
+            f.write(content)
+
+        # Run Trivy config scan
+        cmd = [
+            "trivy", "config",
+            "--format", "json",
+            "--severity", "CRITICAL,HIGH,MEDIUM,LOW",
+            scan_dir
+        ]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+
+        # Parse output
+        output = result.stdout or result.stderr
+
+        try:
+            if "{" in output:
+                json_start = output.index("{")
+                scan_data = json.loads(output[json_start:])
+            else:
+                scan_data = {"Results": []}
+        except json.JSONDecodeError:
+            scan_data = {"Results": []}
+
+        # Process results
+        findings = []
+        summary = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        files_scanned = 0
+
+        for result_item in scan_data.get("Results", []):
+            files_scanned += 1
+            target_file = result_item.get("Target", "unknown")
+
+            for misconfig in result_item.get("Misconfigurations", []):
+                severity = misconfig.get("Severity", "UNKNOWN").lower()
+                if severity in summary:
+                    summary[severity] += 1
+
+                cause = misconfig.get("CauseMetadata", {})
+                code_lines = cause.get("Code", {}).get("Lines", [])
+                code_snippet = None
+                if code_lines:
+                    code_snippet = "\n".join([
+                        line.get("Content", "") for line in code_lines
+                    ])
+
+                finding = {
+                    "id": misconfig.get("ID", ""),
+                    "avd_id": misconfig.get("AVDID", ""),
+                    "title": misconfig.get("Title", ""),
+                    "description": misconfig.get("Description", ""),
+                    "message": misconfig.get("Message", ""),
+                    "severity": misconfig.get("Severity", "UNKNOWN"),
+                    "resolution": misconfig.get("Resolution", ""),
+                    "file": target_file,
+                    "start_line": cause.get("StartLine", 0),
+                    "end_line": cause.get("EndLine", 0),
+                    "code_snippet": code_snippet,
+                    "primary_url": misconfig.get("PrimaryURL", ""),
+                    "references": misconfig.get("References", [])
+                }
+                findings.append(finding)
+
+        logger.info(
+            f"IaC scan {scan_id} completed",
+            findings_count=len(findings),
+            summary=summary
+        )
+
+        return {
+            "scan_id": scan_id,
+            "status": "completed",
+            "scanned_at": datetime.utcnow().isoformat(),
+            "source": f"file:{filename}",
+            "files_scanned": files_scanned,
+            "summary": summary,
+            "findings": findings,
+            "error": None
+        }
+
+    except subprocess.TimeoutExpired:
+        logger.error(f"IaC scan {scan_id} timed out")
+        return {
+            "scan_id": scan_id,
+            "status": "failed",
+            "scanned_at": datetime.utcnow().isoformat(),
+            "source": f"file:{filename}",
+            "files_scanned": 0,
+            "summary": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+            "findings": [],
+            "error": "Scan timed out after 300 seconds"
+        }
+
+    except Exception as e:
+        logger.error(f"IaC scan {scan_id} failed: {e}")
+        return {
+            "scan_id": scan_id,
+            "status": "failed",
+            "scanned_at": datetime.utcnow().isoformat(),
+            "source": f"file:{filename}",
+            "files_scanned": 0,
+            "summary": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+            "findings": [],
+            "error": str(e)
+        }
+
+    finally:
+        # Cleanup
+        if 'scan_dir' in locals() and os.path.exists(scan_dir):
+            shutil.rmtree(scan_dir, ignore_errors=True)

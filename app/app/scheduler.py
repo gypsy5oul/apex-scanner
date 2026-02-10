@@ -3,7 +3,6 @@ Scheduled scans with Google Chat notifications
 Supports cron-based scheduling for base images
 """
 import json
-import redis
 import httpx
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
@@ -11,21 +10,10 @@ from celery import Celery
 from celery.schedules import crontab
 import asyncio
 
-from app.config import settings
+from app.config import settings, get_redis_client
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
-
-# Redis client for schedule storage
-redis_pool = redis.ConnectionPool.from_url(
-    settings.REDIS_URL,
-    max_connections=10,
-    decode_responses=True
-)
-
-
-def get_redis_client() -> redis.Redis:
-    return redis.Redis(connection_pool=redis_pool)
 
 
 class GoogleChatNotifier:

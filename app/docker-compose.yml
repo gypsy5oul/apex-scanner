@@ -1,5 +1,27 @@
 version: "3.8"
 
+# Shared environment variables for all app services
+x-common-env: &common-env
+  TZ: Asia/Kolkata
+  REDIS_URL: redis://redis:6379/0
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+  REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-false}
+  SERVER_HOST: ${SERVER_HOST:?SERVER_HOST is required}
+  SCAN_TIMEOUT: ${SCAN_TIMEOUT:-900}
+  SCAN_RESULT_TTL: ${SCAN_RESULT_TTL:-2592000}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+x-auth-env: &auth-env
+  ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
+  ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?ADMIN_PASSWORD_HASH is required - generate with bcrypt}
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+  JWT_EXPIRATION_HOURS: ${JWT_EXPIRATION_HOURS:-24}
+  CORS_ORIGINS: ${CORS_ORIGINS:-}
+  API_KEY_ENABLED: ${API_KEY_ENABLED:-true}
+  LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-5}
+  LOGIN_LOCKOUT_SECONDS: ${LOGIN_LOCKOUT_SECONDS:-900}
+
 services:
   api:
     build:
@@ -12,19 +34,8 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - TZ=Asia/Kolkata
-      - REDIS_URL=redis://redis:6379/0
-      - SERVER_HOST=${SERVER_HOST:-http://10.0.2.121:7070}
-      - SCAN_TIMEOUT=${SCAN_TIMEOUT:-900}
-      - SCAN_RESULT_TTL=${SCAN_RESULT_TTL:-2592000}
-      - LOG_FORMAT=${LOG_FORMAT:-json}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - ENABLE_METRICS=true
-      # Admin Authentication
-      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-scanner@admin}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-change-in-production}
-      - JWT_EXPIRATION_HOURS=${JWT_EXPIRATION_HOURS:-24}
+      <<: [*common-env, *auth-env]
+      ENABLE_METRICS: "true"
     volumes:
       - /opt/scanner-reports:/var/www/html/reports
       - /opt/scanner-sboms:/var/www/html/sboms
@@ -51,7 +62,7 @@ services:
     command: >
       celery -A app.tasks.celery worker
       --loglevel=info
-      --concurrency=${WORKER_HIGH_CONCURRENCY:-4}
+      --concurrency=${WORKER_HIGH_CONCURRENCY:-8}
       --queues=high_priority,default
       --hostname=worker-high@%h
       --max-tasks-per-child=50
@@ -59,19 +70,14 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - TZ=Asia/Kolkata
-      - REDIS_URL=redis://redis:6379/0
-      - SERVER_HOST=${SERVER_HOST:-http://10.0.2.121:7070}
-      - SCAN_TIMEOUT=${SCAN_TIMEOUT:-900}
-      - SCAN_RESULT_TTL=${SCAN_RESULT_TTL:-2592000}
-      - LOG_FORMAT=${LOG_FORMAT:-json}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DOCKER_HOST=unix:///var/run/docker.sock
-      - WORKER_TYPE=high_priority
+      <<: *common-env
+      DOCKER_HOST: unix:///var/run/docker.sock
+      WORKER_TYPE: high_priority
     volumes:
       - /opt/scanner-reports:/var/www/html/reports
       - /opt/scanner-sboms:/var/www/html/sboms
       - /var/run/docker.sock:/var/run/docker.sock
+      - /root/.docker/config.json:/root/.docker/config.json:ro
     restart: unless-stopped
     deploy:
       resources:
@@ -90,7 +96,7 @@ services:
     command: >
       celery -A app.tasks.celery worker
       --loglevel=info
-      --concurrency=${WORKER_BATCH_CONCURRENCY:-6}
+      --concurrency=${WORKER_BATCH_CONCURRENCY:-12}
       --queues=batch,low_priority,default
       --hostname=worker-batch@%h
       --max-tasks-per-child=100
@@ -98,19 +104,14 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - TZ=Asia/Kolkata
-      - REDIS_URL=redis://redis:6379/0
-      - SERVER_HOST=${SERVER_HOST:-http://10.0.2.121:7070}
-      - SCAN_TIMEOUT=${SCAN_TIMEOUT:-900}
-      - SCAN_RESULT_TTL=${SCAN_RESULT_TTL:-2592000}
-      - LOG_FORMAT=${LOG_FORMAT:-json}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DOCKER_HOST=unix:///var/run/docker.sock
-      - WORKER_TYPE=batch
+      <<: *common-env
+      DOCKER_HOST: unix:///var/run/docker.sock
+      WORKER_TYPE: batch
     volumes:
       - /opt/scanner-reports:/var/www/html/reports
       - /opt/scanner-sboms:/var/www/html/sboms
       - /var/run/docker.sock:/var/run/docker.sock
+      - /root/.docker/config.json:/root/.docker/config.json:ro
     restart: unless-stopped
     deploy:
       mode: replicated
@@ -131,7 +132,7 @@ services:
     command: >
       celery -A app.tasks.celery worker
       --loglevel=info
-      --concurrency=2
+      --concurrency=4
       --queues=system
       --hostname=worker-system@%h
       --max-tasks-per-child=200
@@ -139,15 +140,9 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - TZ=Asia/Kolkata
-      - REDIS_URL=redis://redis:6379/0
-      - SERVER_HOST=${SERVER_HOST:-http://10.0.2.121:7070}
-      - SCAN_TIMEOUT=${SCAN_TIMEOUT:-900}
-      - SCAN_RESULT_TTL=${SCAN_RESULT_TTL:-2592000}
-      - LOG_FORMAT=${LOG_FORMAT:-json}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DOCKER_HOST=unix:///var/run/docker.sock
-      - WORKER_TYPE=system
+      <<: *common-env
+      DOCKER_HOST: unix:///var/run/docker.sock
+      WORKER_TYPE: system
     volumes:
       - /opt/scanner-reports:/var/www/html/reports
       - /opt/scanner-sboms:/var/www/html/sboms
@@ -174,13 +169,7 @@ services:
       worker-high:
         condition: service_started
     environment:
-      - TZ=Asia/Kolkata
-      - REDIS_URL=redis://redis:6379/0
-      - SERVER_HOST=${SERVER_HOST:-http://10.0.2.121:7070}
-      - SCAN_TIMEOUT=${SCAN_TIMEOUT:-900}
-      - SCAN_RESULT_TTL=${SCAN_RESULT_TTL:-2592000}
-      - LOG_FORMAT=${LOG_FORMAT:-json}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      <<: *common-env
     restart: unless-stopped
 
   # Auto-scaler service - monitors queue and scales workers
@@ -194,14 +183,13 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - TZ=Asia/Kolkata
-      - REDIS_URL=redis://redis:6379/0
-      - DOCKER_HOST=unix:///var/run/docker.sock
-      - MIN_WORKERS=${MIN_WORKERS:-2}
-      - MAX_WORKERS=${MAX_WORKERS:-10}
-      - SCALE_UP_THRESHOLD=${SCALE_UP_THRESHOLD:-10}
-      - SCALE_DOWN_THRESHOLD=${SCALE_DOWN_THRESHOLD:-2}
-      - CHECK_INTERVAL=${AUTOSCALE_CHECK_INTERVAL:-30}
+      <<: *common-env
+      DOCKER_HOST: unix:///var/run/docker.sock
+      MIN_WORKERS: ${MIN_WORKERS:-2}
+      MAX_WORKERS: ${MAX_WORKERS:-10}
+      SCALE_UP_THRESHOLD: ${SCALE_UP_THRESHOLD:-10}
+      SCALE_DOWN_THRESHOLD: ${SCALE_DOWN_THRESHOLD:-2}
+      CHECK_INTERVAL: ${AUTOSCALE_CHECK_INTERVAL:-30}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
@@ -221,15 +209,14 @@ services:
       celery -A app.tasks.celery flower
       --port=5555
       --broker=redis://redis:6379/0
-      --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-scanner123}
+      --basic_auth=${FLOWER_USER:?FLOWER_USER is required}:${FLOWER_PASSWORD:?FLOWER_PASSWORD is required}
     ports:
       - "${FLOWER_PORT:-5555}:5555"
     depends_on:
       redis:
         condition: service_healthy
     environment:
-      - TZ=Asia/Kolkata
-      - REDIS_URL=redis://redis:6379/0
+      <<: *common-env
     restart: unless-stopped
     deploy:
       resources:
@@ -242,6 +229,7 @@ services:
     container_name: redis_cache
     command: >
       redis-server
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       --appendonly yes
       --appendfsync everysec
       --save 900 1
@@ -253,10 +241,11 @@ services:
       --timeout 0
       --tcp-backlog 511
       --maxclients 10000
+      --stop-writes-on-bgsave-error no
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -281,7 +270,7 @@ services:
       - api
     environment:
       - TZ=Asia/Kolkata
-      - REACT_APP_API_URL=http://localhost:7070
+      - REACT_APP_API_URL=${DASHBOARD_API_URL:-http://localhost:7070}
     restart: unless-stopped
 
 networks:

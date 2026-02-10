@@ -54,3 +54,6 @@ flower==2.0.1
 
 # JWT Authentication
 PyJWT==2.8.0
+
+# Password hashing
+bcrypt==4.1.2

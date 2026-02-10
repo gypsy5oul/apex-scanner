@@ -8,14 +8,16 @@ import uuid
 import asyncio
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Query, Path, Body, WebSocket, WebSocketDisconnect, BackgroundTasks, Depends
+from fastapi import APIRouter, HTTPException, Query, Path, Body, WebSocket, WebSocketDisconnect, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
 
-from app.config import settings
+from app.config import settings, get_redis_client
 from app.auth import (
     LoginRequest, LoginResponse, TokenData,
-    login, get_current_admin, get_optional_admin
+    login, get_current_user, get_current_admin, get_optional_admin,
+    APIKeyCreate, APIKeyResponse, APIKeyInfo,
+    create_api_key, list_api_keys, revoke_api_key
 )
 from app.logging_config import get_logger
 from app.scheduler import ScheduleManager, GoogleChatNotifier
@@ -29,20 +31,7 @@ from app.enrichment import (
     enrich_scan_results, update_kev_database
 )
 
-import redis
-
 logger = get_logger(__name__)
-
-# Redis connection
-redis_pool = redis.ConnectionPool.from_url(
-    settings.REDIS_URL,
-    max_connections=20,
-    decode_responses=True
-)
-
-
-def get_redis_client() -> redis.Redis:
-    return redis.Redis(connection_pool=redis_pool)
 
 
 # Create router for v2 endpoints
@@ -58,7 +47,7 @@ router_v2 = APIRouter(prefix="/api/v2", tags=["enterprise"])
     description="Authenticate as admin and receive JWT token",
     tags=["authentication"]
 )
-async def admin_login(request: LoginRequest = Body(...)):
+async def admin_login(request: LoginRequest = Body(...), http_request: Request = None):
     """
     Login with admin credentials to access protected endpoints.
 
@@ -68,7 +57,7 @@ async def admin_login(request: LoginRequest = Body(...)):
     - System status and updates
     - Worker monitoring
     """
-    return login(request.username, request.password)
+    return login(request.username, request.password, request=http_request)
 
 
 @router_v2.get(
@@ -272,11 +261,27 @@ async def run_schedule_now(
         images = json.loads(images)
 
     scan_ids = []
+    skipped_images = []
     redis_client = get_redis_client()
 
     for image in images:
+        # === DEDUPLICATION CHECK ===
+        dedup_key = f"scan_dedup:{image}"
+        existing_scan_id = redis_client.get(dedup_key)
+
+        if existing_scan_id:
+            existing_status = redis_client.hget(existing_scan_id, "status")
+            if existing_status in ["in_progress", "completed"]:
+                # Skip this image, use existing scan
+                scan_ids.append(existing_scan_id)
+                skipped_images.append(image)
+                continue
+
         scan_id = str(uuid.uuid4())
         scan_ids.append(scan_id)
+
+        # Set deduplication key (expires in 10 minutes)
+        redis_client.setex(dedup_key, 600, scan_id)
 
         # Initialize scan
         redis_client.hset(scan_id, mapping={
@@ -300,7 +305,9 @@ async def run_schedule_now(
         "status": "triggered",
         "schedule_name": name,
         "scan_ids": scan_ids,
-        "image_count": len(images)
+        "image_count": len(images),
+        "new_scans": len(images) - len(skipped_images),
+        "skipped_duplicates": len(skipped_images)
     }
 
 
@@ -584,7 +591,8 @@ async def delete_base_image(
     description="Get vulnerabilities with detailed CVSS scores and exploitability metrics"
 )
 async def get_cvss_enriched(
-    scan_id: str = Path(..., description="Scan ID")
+    scan_id: str = Path(..., description="Scan ID"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get CVSS enriched vulnerability data"""
     redis_client = get_redis_client()
@@ -616,7 +624,8 @@ async def get_cvss_enriched(
 async def get_image_trends(
     image_name: str = Path(..., description="Docker image name"),
     days: int = Query(30, ge=1, le=365, description="Number of days"),
-    limit: int = Query(100, ge=1, le=500, description="Max data points")
+    limit: int = Query(100, ge=1, le=500, description="Max data points"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get vulnerability trends for an image"""
     analyzer = TrendAnalyzer()
@@ -631,7 +640,8 @@ async def get_image_trends(
     description="Get global vulnerability trends across all scans"
 )
 async def get_global_trends(
-    days: int = Query(30, ge=1, le=365, description="Number of days")
+    days: int = Query(30, ge=1, le=365, description="Number of days"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get global vulnerability trends"""
     analyzer = TrendAnalyzer()
@@ -647,7 +657,8 @@ async def get_global_trends(
 )
 async def get_top_vulnerable(
     days: int = Query(7, ge=1, le=30),
-    limit: int = Query(10, ge=1, le=50)
+    limit: int = Query(10, ge=1, le=50),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get top vulnerable images"""
     analyzer = TrendAnalyzer()
@@ -665,7 +676,8 @@ async def get_top_vulnerable(
     description="Get vulnerability distribution statistics"
 )
 async def get_vulnerability_distribution(
-    days: int = Query(30, ge=1, le=365)
+    days: int = Query(30, ge=1, le=365),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get vulnerability distribution"""
     analyzer = TrendAnalyzer()
@@ -682,7 +694,8 @@ async def get_vulnerability_distribution(
     description="Export vulnerability list as CSV file"
 )
 async def export_csv(
-    scan_id: str = Path(..., description="Scan ID")
+    scan_id: str = Path(..., description="Scan ID"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Export vulnerabilities to CSV"""
     redis_client = get_redis_client()
@@ -715,7 +728,8 @@ async def export_csv(
     description="Export SBOM packages as CSV file"
 )
 async def export_sbom_csv(
-    scan_id: str = Path(..., description="Scan ID")
+    scan_id: str = Path(..., description="Scan ID"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Export SBOM to CSV"""
     sbom_path = f"{settings.SBOMS_DIR}/{scan_id}_syft_json.json"
@@ -747,7 +761,8 @@ async def export_sbom_csv(
 )
 async def export_executive_pdf(
     scan_id: str = Path(..., description="Scan ID"),
-    include_details: bool = Query(False, description="Include vulnerability details")
+    include_details: bool = Query(False, description="Include vulnerability details"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Export executive summary PDF"""
     redis_client = get_redis_client()
@@ -795,7 +810,8 @@ async def export_executive_pdf(
     description="Generate detailed vulnerability PDF report"
 )
 async def export_detailed_pdf(
-    scan_id: str = Path(..., description="Scan ID")
+    scan_id: str = Path(..., description="Scan ID"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Export detailed PDF report"""
     redis_client = get_redis_client()
@@ -887,7 +903,8 @@ async def websocket_global(websocket: WebSocket):
     description="Send a test notification to verify webhook configuration"
 )
 async def test_notification(
-    webhook_url: str = Body(..., embed=True, description="Google Chat webhook URL")
+    webhook_url: str = Body(..., embed=True, description="Google Chat webhook URL"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Test Google Chat notification"""
     notifier = GoogleChatNotifier(webhook_url)
@@ -923,7 +940,8 @@ async def test_notification(
     description="Get package dependency graph with vulnerability mapping"
 )
 async def get_dependency_graph(
-    scan_id: str = Path(..., description="Scan ID")
+    scan_id: str = Path(..., description="Scan ID"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get dependency graph for a scan"""
     from app.dependency_analyzer import DependencyAnalyzer
@@ -944,7 +962,8 @@ async def get_dependency_graph(
 )
 async def get_package_impact(
     scan_id: str = Path(..., description="Scan ID"),
-    package_name: str = Path(..., description="Package name to analyze")
+    package_name: str = Path(..., description="Package name to analyze"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get impact analysis for a specific package"""
     from app.dependency_analyzer import DependencyAnalyzer
@@ -966,7 +985,8 @@ async def get_package_impact(
     description="Get prioritized remediation suggestions for vulnerabilities"
 )
 async def get_remediation_plan(
-    scan_id: str = Path(..., description="Scan ID")
+    scan_id: str = Path(..., description="Scan ID"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get remediation plan for a scan"""
     from app.remediation import RemediationEngine
@@ -986,7 +1006,8 @@ async def get_remediation_plan(
     description="Get high-impact, low-effort remediation actions"
 )
 async def get_quick_wins(
-    scan_id: str = Path(..., description="Scan ID")
+    scan_id: str = Path(..., description="Scan ID"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get quick win remediation actions"""
     from app.remediation import RemediationEngine
@@ -1011,7 +1032,8 @@ async def get_quick_wins(
 )
 async def get_remediation_script(
     scan_id: str = Path(..., description="Scan ID"),
-    package_type: Optional[str] = Query(None, description="Filter by package type (npm, pip, etc.)")
+    package_type: Optional[str] = Query(None, description="Filter by package type (npm, pip, etc.)"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get remediation shell script"""
     from app.remediation import RemediationEngine
@@ -1044,7 +1066,8 @@ async def get_remediation_script(
     description="Get comprehensive risk score for an image scan"
 )
 async def get_risk_score(
-    scan_id: str = Path(..., description="Scan ID")
+    scan_id: str = Path(..., description="Scan ID"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get overall risk score for a scan"""
     from app.risk_scoring import RiskScoringEngine
@@ -1063,7 +1086,7 @@ async def get_risk_score(
     summary="Get Risk Weights",
     description="Get current risk scoring weights"
 )
-async def get_risk_weights():
+async def get_risk_weights(_user: TokenData = Depends(get_current_user)):
     """Get current risk scoring weights"""
     from app.risk_scoring import RiskScoringEngine
 
@@ -1089,7 +1112,8 @@ async def get_risk_weights():
     description="Update risk scoring weights (must sum to 1.0)"
 )
 async def update_risk_weights(
-    weights: Dict[str, float] = Body(..., description="New weights")
+    weights: Dict[str, float] = Body(..., description="New weights"),
+    _admin: TokenData = Depends(get_current_admin)
 ):
     """Update risk scoring weights"""
     from app.risk_scoring import RiskScoringEngine
@@ -1438,7 +1462,8 @@ async def get_enriched_vulnerabilities(
     scan_id: str = Path(..., description="Scan ID"),
     sort_by: str = Query("risk_priority", description="Sort field: risk_priority, epss_score, severity"),
     kev_only: bool = Query(False, description="Show only KEV vulnerabilities"),
-    min_epss: float = Query(0.0, ge=0, le=1, description="Minimum EPSS score filter")
+    min_epss: float = Query(0.0, ge=0, le=1, description="Minimum EPSS score filter"),
+    _user: TokenData = Depends(get_current_user)
 ):
     """Get enriched vulnerability data for a scan"""
     redis_client = get_redis_client()
@@ -1496,7 +1521,7 @@ async def get_enriched_vulnerabilities(
     summary="Get KEV Matches",
     description="Get only vulnerabilities that are in CISA KEV catalog"
 )
-async def get_kev_matches(scan_id: str = Path(..., description="Scan ID")):
+async def get_kev_matches(scan_id: str = Path(..., description="Scan ID"), _user: TokenData = Depends(get_current_user)):
     """Get vulnerabilities that are in the KEV catalog"""
     redis_client = get_redis_client()
 
@@ -1527,7 +1552,7 @@ async def get_kev_matches(scan_id: str = Path(..., description="Scan ID")):
     summary="Get High Risk Vulnerabilities",
     description="Get critical priority vulnerabilities (KEV or high EPSS)"
 )
-async def get_high_risk_vulns(scan_id: str = Path(..., description="Scan ID")):
+async def get_high_risk_vulns(scan_id: str = Path(..., description="Scan ID"), _user: TokenData = Depends(get_current_user)):
     """Get high risk vulnerabilities based on KEV status and EPSS scores"""
     redis_client = get_redis_client()
 
@@ -1563,7 +1588,7 @@ async def get_high_risk_vulns(scan_id: str = Path(..., description="Scan ID")):
     summary="Get KEV Database Status",
     description="Get CISA KEV database statistics and last update time"
 )
-async def get_kev_status():
+async def get_kev_status(_user: TokenData = Depends(get_current_user)):
     """Get KEV database status (public endpoint)"""
     kev_client = KEVClient()
     return kev_client.get_kev_stats()
@@ -1585,7 +1610,7 @@ async def force_kev_update(admin: TokenData = Depends(get_current_admin)):
     summary="Check CVE in KEV",
     description="Check if a specific CVE is in the KEV catalog"
 )
-async def check_cve_in_kev(cve_id: str = Path(..., description="CVE ID to check")):
+async def check_cve_in_kev(cve_id: str = Path(..., description="CVE ID to check"), _user: TokenData = Depends(get_current_user)):
     """Check if a CVE is in the KEV catalog"""
     kev_client = KEVClient()
 
@@ -1604,7 +1629,7 @@ async def check_cve_in_kev(cve_id: str = Path(..., description="CVE ID to check"
     summary="Lookup EPSS Scores",
     description="Get EPSS scores for a list of CVEs"
 )
-async def lookup_epss_scores(cve_ids: List[str] = Body(..., description="List of CVE IDs")):
+async def lookup_epss_scores(cve_ids: List[str] = Body(..., description="List of CVE IDs"), _user: TokenData = Depends(get_current_user)):
     """Lookup EPSS scores for multiple CVEs"""
     if not cve_ids:
         raise HTTPException(status_code=400, detail="CVE list cannot be empty")
@@ -1656,3 +1681,506 @@ async def invalidate_image_cache(
         "image_name": image_name,
         "digest": digest[:12] + "..." if digest else None
     }
+
+
+# ============== IaC Scanning Endpoints ==============
+
+class IacScanRequest(BaseModel):
+    """Request for IaC file scan"""
+    content: str = Field(..., description="File content to scan")
+    filename: str = Field(default="Dockerfile", description="Filename (determines scan type)")
+
+
+class IacMultiFileRequest(BaseModel):
+    """Request for multi-file IaC scan"""
+    files: Dict[str, str] = Field(..., description="Map of filename to content")
+
+
+class IacRepoRequest(BaseModel):
+    """Request for Git repository IaC scan"""
+    repo_url: str = Field(..., description="Git repository URL")
+    branch: str = Field(default="main", description="Branch to scan")
+    token: Optional[str] = Field(None, description="Git access token for private repos")
+    paths: Optional[List[str]] = Field(None, description="Specific paths to scan")
+
+
+@router_v2.post(
+    "/iac/scan/content",
+    summary="Scan IaC Content",
+    description="Scan a single IaC file content for misconfigurations",
+    tags=["iac"]
+)
+async def iac_scan_content_endpoint(request: IacScanRequest = Body(...), _user: TokenData = Depends(get_current_user)):
+    """Scan IaC file content for misconfigurations"""
+    from app.tasks import scan_iac_content
+
+    # Submit to Celery and wait for result
+    task = scan_iac_content.apply_async(
+        args=[request.content, request.filename],
+        queue='default'
+    )
+
+    try:
+        # Wait for result with timeout
+        result = task.get(timeout=60)
+        return result
+    except Exception as e:
+        return {
+            "scan_id": task.id,
+            "status": "failed",
+            "scanned_at": datetime.utcnow().isoformat(),
+            "source": f"file:{request.filename}",
+            "files_scanned": 0,
+            "summary": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+            "findings": [],
+            "error": str(e)
+        }
+
+
+@router_v2.post(
+    "/iac/scan/files",
+    summary="Scan Multiple IaC Files",
+    description="Scan multiple IaC files for misconfigurations",
+    tags=["iac"]
+)
+async def scan_iac_files(request: IacMultiFileRequest = Body(...), _user: TokenData = Depends(get_current_user)):
+    """Scan multiple IaC files for misconfigurations"""
+    from app.iac_scanner import iac_scanner
+
+    if not request.files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    if len(request.files) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 files per request")
+
+    result = iac_scanner.scan_multiple_files(files=request.files)
+
+    return {
+        "scan_id": result.scan_id,
+        "status": result.status,
+        "scanned_at": result.scanned_at,
+        "source": result.source,
+        "files_scanned": result.files_scanned,
+        "summary": result.summary,
+        "findings": result.findings,
+        "error": result.error
+    }
+
+
+@router_v2.post(
+    "/iac/scan/repo",
+    summary="Scan Git Repository",
+    description="Scan a Git repository for IaC misconfigurations",
+    tags=["iac"]
+)
+async def scan_iac_repo(
+    request: IacRepoRequest = Body(...),
+    admin: TokenData = Depends(get_current_admin)
+):
+    """Scan a Git repository for IaC misconfigurations (Admin only)"""
+    from app.iac_scanner import iac_scanner
+
+    result = iac_scanner.scan_git_repo(
+        repo_url=request.repo_url,
+        branch=request.branch,
+        token=request.token,
+        paths=request.paths
+    )
+
+    return {
+        "scan_id": result.scan_id,
+        "status": result.status,
+        "scanned_at": result.scanned_at,
+        "source": result.source,
+        "files_scanned": result.files_scanned,
+        "summary": result.summary,
+        "findings": result.findings,
+        "error": result.error
+    }
+
+
+@router_v2.post(
+    "/iac/scan/content/with-policy",
+    summary="Scan IaC with Policy",
+    description="Scan IaC content and evaluate against a security policy",
+    tags=["iac"]
+)
+async def iac_scan_with_policy_endpoint(
+    request: IacScanRequest = Body(...),
+    policy_id: Optional[str] = Query(None, description="Policy ID to evaluate against"),
+    _user: TokenData = Depends(get_current_user)
+):
+    """Scan IaC content and evaluate against a policy"""
+    from app.tasks import scan_iac_content
+    from app.policy_engine import policy_engine
+
+    # Submit to Celery and wait for result
+    task = scan_iac_content.apply_async(
+        args=[request.content, request.filename],
+        queue='default'
+    )
+
+    try:
+        result = task.get(timeout=60)
+    except Exception as e:
+        return {
+            "scan_id": task.id,
+            "status": "failed",
+            "scanned_at": datetime.utcnow().isoformat(),
+            "source": f"file:{request.filename}",
+            "files_scanned": 0,
+            "summary": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+            "findings": [],
+            "policy_result": None,
+            "error": str(e)
+        }
+
+    # Evaluate against policy if provided
+    policy_result = None
+    if policy_id and result.get("status") == "completed":
+        try:
+            eval_result = policy_engine.evaluate_iac_findings(
+                policy_id=policy_id,
+                findings=result.get("findings", [])
+            )
+            policy_result = {
+                "policy_id": eval_result.policy_id,
+                "policy_name": eval_result.policy_name,
+                "passed": eval_result.passed,
+                "status": eval_result.status,
+                "violations": eval_result.violations,
+                "summary": eval_result.summary,
+                "evaluated_at": eval_result.evaluated_at
+            }
+        except ValueError as e:
+            policy_result = {"error": str(e)}
+
+    result["policy_result"] = policy_result
+    return result
+
+
+# ============== Policy Engine Endpoints ==============
+
+class PolicyCreateRequest(BaseModel):
+    """Request to create a security policy"""
+    name: str = Field(..., description="Policy name", min_length=1, max_length=100)
+    description: str = Field(default="", description="Policy description")
+    rules: List[Dict[str, Any]] = Field(..., description="List of policy rules")
+    enabled: bool = Field(default=True, description="Whether policy is enabled")
+    fail_on_warn: bool = Field(default=False, description="Fail gate on warnings too")
+    apply_to: Optional[List[str]] = Field(None, description="Image patterns to apply to")
+
+
+class PolicyUpdateRequest(BaseModel):
+    """Request to update a policy"""
+    name: Optional[str] = Field(None, description="Policy name")
+    description: Optional[str] = Field(None, description="Policy description")
+    rules: Optional[List[Dict[str, Any]]] = Field(None, description="Policy rules")
+    enabled: Optional[bool] = Field(None, description="Whether policy is enabled")
+    fail_on_warn: Optional[bool] = Field(None, description="Fail on warnings")
+    apply_to: Optional[List[str]] = Field(None, description="Image patterns")
+
+
+class PolicyEvaluateRequest(BaseModel):
+    """Request to evaluate vulnerabilities against a policy"""
+    policy_id: str = Field(..., description="Policy ID")
+    scan_id: Optional[str] = Field(None, description="Scan ID to evaluate")
+    vulnerabilities: Optional[List[Dict[str, Any]]] = Field(None, description="Direct vulnerability list")
+
+
+@router_v2.post(
+    "/policies",
+    summary="Create Security Policy",
+    description="Create a new security policy for vulnerability gates",
+    tags=["policies"]
+)
+async def create_policy(
+    request: PolicyCreateRequest = Body(...),
+    admin: TokenData = Depends(get_current_admin)
+):
+    """Create a new security policy (Admin only)"""
+    from app.policy_engine import policy_engine
+
+    policy = policy_engine.create_policy(
+        name=request.name,
+        description=request.description,
+        rules=request.rules,
+        enabled=request.enabled,
+        fail_on_warn=request.fail_on_warn,
+        apply_to=request.apply_to
+    )
+
+    return {
+        "status": "created",
+        "policy": {
+            "id": policy.id,
+            "name": policy.name,
+            "description": policy.description,
+            "enabled": policy.enabled,
+            "rules": policy.rules,
+            "fail_on_warn": policy.fail_on_warn,
+            "apply_to": policy.apply_to,
+            "created_at": policy.created_at
+        }
+    }
+
+
+@router_v2.get(
+    "/policies",
+    summary="List Security Policies",
+    description="List all security policies",
+    tags=["policies"]
+)
+async def list_policies(_user: TokenData = Depends(get_current_user)):
+    """List all security policies"""
+    from app.policy_engine import policy_engine
+
+    policies = policy_engine.list_policies()
+
+    return {
+        "total": len(policies),
+        "policies": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "description": p.description,
+                "enabled": p.enabled,
+                "rules_count": len(p.rules),
+                "fail_on_warn": p.fail_on_warn,
+                "created_at": p.created_at,
+                "updated_at": p.updated_at
+            }
+            for p in policies
+        ]
+    }
+
+
+@router_v2.get(
+    "/policies/{policy_id}",
+    summary="Get Policy Details",
+    description="Get details of a specific security policy",
+    tags=["policies"]
+)
+async def get_policy(policy_id: str = Path(..., description="Policy ID"), _user: TokenData = Depends(get_current_user)):
+    """Get policy details"""
+    from app.policy_engine import policy_engine
+
+    policy = policy_engine.get_policy(policy_id)
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+
+    return {
+        "id": policy.id,
+        "name": policy.name,
+        "description": policy.description,
+        "enabled": policy.enabled,
+        "rules": policy.rules,
+        "fail_on_warn": policy.fail_on_warn,
+        "apply_to": policy.apply_to,
+        "created_at": policy.created_at,
+        "updated_at": policy.updated_at
+    }
+
+
+@router_v2.put(
+    "/policies/{policy_id}",
+    summary="Update Policy",
+    description="Update an existing security policy",
+    tags=["policies"]
+)
+async def update_policy(
+    policy_id: str = Path(..., description="Policy ID"),
+    request: PolicyUpdateRequest = Body(...),
+    admin: TokenData = Depends(get_current_admin)
+):
+    """Update a security policy (Admin only)"""
+    from app.policy_engine import policy_engine
+
+    policy = policy_engine.update_policy(
+        policy_id=policy_id,
+        name=request.name,
+        description=request.description,
+        rules=request.rules,
+        enabled=request.enabled,
+        fail_on_warn=request.fail_on_warn,
+        apply_to=request.apply_to
+    )
+
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+
+    return {
+        "status": "updated",
+        "policy": {
+            "id": policy.id,
+            "name": policy.name,
+            "description": policy.description,
+            "enabled": policy.enabled,
+            "rules": policy.rules,
+            "fail_on_warn": policy.fail_on_warn,
+            "apply_to": policy.apply_to,
+            "updated_at": policy.updated_at
+        }
+    }
+
+
+@router_v2.delete(
+    "/policies/{policy_id}",
+    summary="Delete Policy",
+    description="Delete a security policy",
+    tags=["policies"]
+)
+async def delete_policy(
+    policy_id: str = Path(..., description="Policy ID"),
+    admin: TokenData = Depends(get_current_admin)
+):
+    """Delete a security policy (Admin only)"""
+    from app.policy_engine import policy_engine
+
+    deleted = policy_engine.delete_policy(policy_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Policy not found")
+
+    return {"status": "deleted", "policy_id": policy_id}
+
+
+@router_v2.post(
+    "/policies/evaluate",
+    summary="Evaluate Against Policy",
+    description="Evaluate vulnerabilities or a scan against a security policy",
+    tags=["policies"]
+)
+async def evaluate_policy(request: PolicyEvaluateRequest = Body(...), _user: TokenData = Depends(get_current_user)):
+    """Evaluate vulnerabilities against a policy"""
+    from app.policy_engine import policy_engine
+
+    vulnerabilities = request.vulnerabilities
+
+    # If scan_id provided, get vulnerabilities from scan
+    if request.scan_id and not vulnerabilities:
+        redis_client = get_redis_client()
+        vulns_raw = redis_client.get(f"vulns:{request.scan_id}")
+        if not vulns_raw:
+            raise HTTPException(status_code=404, detail=f"Scan {request.scan_id} not found")
+        vulnerabilities = json.loads(vulns_raw)
+
+    if not vulnerabilities:
+        raise HTTPException(status_code=400, detail="No vulnerabilities provided")
+
+    try:
+        result = policy_engine.evaluate_vulnerabilities(
+            policy_id=request.policy_id,
+            vulnerabilities=vulnerabilities
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    return {
+        "policy_id": result.policy_id,
+        "policy_name": result.policy_name,
+        "passed": result.passed,
+        "status": result.status,
+        "violations": result.violations,
+        "summary": result.summary,
+        "evaluated_at": result.evaluated_at,
+        "total_vulnerabilities": len(vulnerabilities)
+    }
+
+
+@router_v2.get(
+    "/scan/{scan_id}/policy-check",
+    summary="Check Scan Against All Policies",
+    description="Evaluate a scan against all enabled policies",
+    tags=["policies"]
+)
+async def check_scan_policies(scan_id: str = Path(..., description="Scan ID"), _user: TokenData = Depends(get_current_user)):
+    """Check a scan against all enabled policies"""
+    from app.policy_engine import policy_engine
+
+    redis_client = get_redis_client()
+    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    if not vulns_raw:
+        raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
+
+    vulnerabilities = json.loads(vulns_raw)
+    policies = policy_engine.list_policies()
+
+    results = []
+    overall_passed = True
+
+    for policy in policies:
+        if not policy.enabled:
+            continue
+
+        result = policy_engine.evaluate_vulnerabilities(
+            policy_id=policy.id,
+            vulnerabilities=vulnerabilities
+        )
+
+        if not result.passed:
+            overall_passed = False
+
+        results.append({
+            "policy_id": result.policy_id,
+            "policy_name": result.policy_name,
+            "passed": result.passed,
+            "status": result.status,
+            "summary": result.summary,
+            "violation_count": len(result.violations)
+        })
+
+    return {
+        "scan_id": scan_id,
+        "overall_passed": overall_passed,
+        "policies_evaluated": len(results),
+        "results": results
+    }
+
+# ============== API Key Management Endpoints ==============
+
+@router_v2.post(
+    "/api-keys",
+    response_model=APIKeyResponse,
+    summary="Create API Key",
+    description="Create a new API key for CI/CD pipeline authentication",
+    tags=["authentication"]
+)
+async def create_api_key_endpoint(
+    request: APIKeyCreate = Body(...),
+    admin: TokenData = Depends(get_current_admin)
+):
+    """Create a new API key (Admin only). The raw key is only shown once."""
+    return create_api_key(name=request.name, expires_days=request.expires_days)
+
+
+@router_v2.get(
+    "/api-keys",
+    summary="List API Keys",
+    description="List all active API keys (without raw key values)",
+    tags=["authentication"]
+)
+async def list_api_keys_endpoint(admin: TokenData = Depends(get_current_admin)):
+    """List all active API keys (Admin only)"""
+    keys = list_api_keys()
+    return {
+        "total": len(keys),
+        "keys": [k.model_dump() for k in keys]
+    }
+
+
+@router_v2.delete(
+    "/api-keys/{key_id}",
+    summary="Revoke API Key",
+    description="Revoke an API key by its ID",
+    tags=["authentication"]
+)
+async def revoke_api_key_endpoint(
+    key_id: str = Path(..., description="API key ID to revoke"),
+    admin: TokenData = Depends(get_current_admin)
+):
+    """Revoke an API key (Admin only)"""
+    revoked = revoke_api_key(key_id)
+    if not revoked:
+        raise HTTPException(status_code=404, detail="API key not found")
+    return {"status": "revoked", "key_id": key_id}
+

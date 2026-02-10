@@ -2,9 +2,15 @@
 Trivy vulnerability scanner implementation
 """
 import json
+import os
+import shutil
 import subprocess
+import tempfile
 from typing import Dict, Any
 from .base import BaseScanner
+
+# Shared Trivy cache path (pre-downloaded at build time)
+_TRIVY_SHARED_CACHE = os.path.expanduser("~/.cache/trivy")
 
 
 class TrivyScanner(BaseScanner):
@@ -25,8 +31,19 @@ class TrivyScanner(BaseScanner):
         Returns:
             Dictionary with scan status and results
         """
+        trivy_cache = None
         try:
             self.logger.info(f"Starting Trivy scan for: {image_name}")
+
+            # Create per-scan cache dir with symlinked subdirs to avoid lock
+            # contention between concurrent workers sharing the same container.
+            trivy_cache = tempfile.mkdtemp(prefix="trivy-scan-")
+            if os.path.isdir(_TRIVY_SHARED_CACHE):
+                for entry in os.listdir(_TRIVY_SHARED_CACHE):
+                    src = os.path.join(_TRIVY_SHARED_CACHE, entry)
+                    dst = os.path.join(trivy_cache, entry)
+                    if os.path.isdir(src):
+                        os.symlink(src, dst)
 
             command = [
                 "trivy",
@@ -34,6 +51,11 @@ class TrivyScanner(BaseScanner):
                 "--format", "json",
                 "--scanners", "vuln,secret",  # Scan for vulnerabilities and secrets
                 "--severity", "CRITICAL,HIGH,MEDIUM,LOW",
+                "--skip-db-update",  # Use cached DB
+                "--skip-java-db-update",  # Use cached Java DB
+                "--skip-version-check",  # Skip version check to avoid noise/failures
+                "--db-repository", "ghcr.io/aquasecurity/trivy-db:2",
+                "--cache-dir", trivy_cache,
                 image_name
             ]
 
@@ -73,6 +95,9 @@ class TrivyScanner(BaseScanner):
             error_msg = f"Trivy scan error: {str(e)}"
             self.logger.error(error_msg)
             return {"success": False, "error": error_msg, "scanner": self.scanner_name}
+        finally:
+            if trivy_cache and os.path.isdir(trivy_cache):
+                shutil.rmtree(trivy_cache, ignore_errors=True)
 
     def parse_results(self, raw_output: str) -> Dict[str, Any]:
         """

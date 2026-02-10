@@ -2,6 +2,7 @@
 Grype vulnerability scanner implementation
 """
 import json
+import os
 import subprocess
 from typing import Dict, Any
 from .base import BaseScanner
@@ -35,11 +36,17 @@ class GrypeScanner(BaseScanner):
                 "--scope", "all-layers"
             ]
 
+            # Disable auto DB update during scans to avoid failures on low disk.
+            # DB updates are handled by the scheduled Celery task instead.
+            env = os.environ.copy()
+            env["GRYPE_DB_AUTO_UPDATE"] = "false"
+
             result = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                env=env
             )
 
             if result.returncode != 0:
