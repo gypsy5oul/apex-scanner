@@ -1,6 +1,7 @@
 """
 FastAPI application entry point with Prometheus metrics integration
 """
+import json
 import os
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -177,6 +178,82 @@ async def detailed_health():
     }
 
     return health_status
+
+
+@app.get("/health/scanners", tags=["health"])
+async def scanner_health():
+    """
+    Scanner health check — reads cached preflight results from workers.
+
+    Returns per-scanner binary + DB status.
+    Returns HTTP 503 if any enabled scanner is unavailable on all workers.
+    Used by Kubernetes readiness probes and monitoring.
+    """
+    from fastapi.responses import JSONResponse
+
+    r = get_redis_client()
+    worker_keys = list(r.scan_iter("worker:health:*", count=100))
+
+    workers = []
+    for key in worker_keys:
+        raw = r.get(key)
+        if raw:
+            try:
+                workers.append(json.loads(raw))
+            except json.JSONDecodeError:
+                pass
+
+    # Aggregate: a scanner is "available" if at least one worker reports it healthy
+    scanner_names = ["grype", "trivy", "syft"]
+    scanner_status = {}
+    any_unhealthy = False
+
+    for name in scanner_names:
+        enabled = getattr(settings, f"ENABLE_{name.upper()}", False)
+        if not enabled:
+            scanner_status[name] = {"status": "disabled"}
+            continue
+
+        healthy_on = [
+            w.get("hostname", "?")
+            for w in workers
+            if w.get(name, {}).get("status") == "healthy"
+        ]
+        unhealthy_errors = [
+            w.get(name, {}).get("error", "unknown")
+            for w in workers
+            if w.get(name, {}).get("status") == "unhealthy"
+        ]
+
+        if healthy_on:
+            scanner_status[name] = {
+                "status": "healthy",
+                "healthy_workers": healthy_on,
+            }
+        elif workers:
+            any_unhealthy = True
+            scanner_status[name] = {
+                "status": "unhealthy",
+                "errors": list(set(unhealthy_errors)),
+            }
+        else:
+            any_unhealthy = True
+            scanner_status[name] = {
+                "status": "unknown",
+                "error": "No worker health data available",
+            }
+
+    overall = "unhealthy" if any_unhealthy else "healthy"
+    status_code = 503 if any_unhealthy else 200
+
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": overall,
+            "scanners": scanner_status,
+            "workers_reporting": len(workers),
+        },
+    )
 
 
 @app.on_event("startup")

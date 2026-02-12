@@ -4,8 +4,10 @@ Includes batch scanning, metrics, and structured logging
 """
 import os
 import json
+import socket
 import traceback
 from celery import Celery, group
+from celery.signals import worker_ready
 from datetime import datetime
 from typing import List, Dict, Any
 
@@ -139,6 +141,82 @@ env = Environment(
 # Ensure directories exist
 os.makedirs(settings.REPORTS_DIR, exist_ok=True)
 os.makedirs(settings.SBOMS_DIR, exist_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Worker startup: validate scanner binaries and publish health to Redis
+# ---------------------------------------------------------------------------
+
+def validate_scanner_binaries() -> Dict[str, Any]:
+    """Run preflight checks on all enabled scanners and return status dict."""
+    from app.scanners.grype_scanner import GrypeScanner
+    from app.scanners.trivy_scanner import TrivyScanner
+    from app.scanners.syft_scanner import SyftScanner
+
+    results: Dict[str, Any] = {}
+    for name, cls, enabled in [
+        ("grype", GrypeScanner, settings.ENABLE_GRYPE),
+        ("trivy", TrivyScanner, settings.ENABLE_TRIVY),
+        ("syft", SyftScanner, settings.ENABLE_SYFT),
+    ]:
+        if not enabled:
+            results[name] = {"status": "disabled"}
+            continue
+        try:
+            scanner = cls()
+            ok, err = scanner.preflight()
+            results[name] = {
+                "status": "healthy" if ok else "unhealthy",
+                "error": err,
+                "version": scanner.get_scanner_version() if ok else None,
+            }
+        except Exception as exc:
+            results[name] = {"status": "unhealthy", "error": str(exc)}
+    return results
+
+
+@worker_ready.connect
+def on_worker_ready(**kwargs):
+    """Validate scanner binaries when the Celery worker starts."""
+    hostname = socket.gethostname()
+    logger.info(f"Worker {hostname} starting — running scanner preflight checks")
+
+    health = validate_scanner_binaries()
+    health["hostname"] = hostname
+    health["checked_at"] = datetime.now().isoformat()
+
+    # Publish to Redis so the API /health/scanners endpoint can read it
+    try:
+        r = get_redis_client()
+        r.setex(
+            f"worker:health:{hostname}",
+            3600,  # 1 hour TTL — refreshed on each worker restart
+            json.dumps(health),
+        )
+    except Exception as exc:
+        logger.warning(f"Could not publish worker health to Redis: {exc}")
+
+    # Log results prominently
+    all_healthy = True
+    for name in ("grype", "trivy", "syft"):
+        info = health.get(name, {})
+        status = info.get("status", "unknown")
+        if status == "healthy":
+            logger.info(f"  {name}: OK (version: {info.get('version', '?')})")
+        elif status == "disabled":
+            logger.info(f"  {name}: DISABLED via config")
+        else:
+            all_healthy = False
+            logger.error(
+                f"  {name}: UNHEALTHY — {info.get('error', 'unknown')}. "
+                "Scans using this scanner will fail until resolved."
+            )
+
+    if not all_healthy:
+        logger.error(
+            "One or more scanners failed preflight. "
+            "Scans may return degraded results."
+        )
 
 
 def generate_sbom_html_report(
@@ -474,17 +552,39 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) ->
             )
 
             # Check if any scanner succeeded
-            if not merged_results.get("scanners_used"):
-                error_msg = "All scanners failed"
+            scanners_requested = merged_results.get("scanners_requested", [])
+            scanners_used = merged_results.get("scanners_used", [])
+            scanners_failed = merged_results.get("scanners_failed", {})
+
+            if not scanners_used:
+                error_msg = (
+                    f"All scanners failed: "
+                    f"{json.dumps(scanners_failed)}"
+                )
                 logger.error(
                     error_msg,
                     scan_id=scan_id,
                     summary=merged_results.get('summary', {})
                 )
-                redis_client.hset(scan_id, mapping={"status": "failed", "error": error_msg})
+                redis_client.hset(scan_id, mapping={
+                    "status": "failed",
+                    "error": error_msg,
+                    "scanner_errors": json.dumps(scanners_failed),
+                })
                 SCANS_COMPLETED.labels(status='failure', scanner='all').inc()
                 SCANS_IN_PROGRESS.dec()
                 return {"scan_id": scan_id, "status": "failed", "error": error_msg}
+
+            # Determine scan quality — degraded if some scanners failed
+            scan_quality = "full" if set(scanners_requested) == set(scanners_used) else "degraded"
+            if scan_quality == "degraded":
+                logger.warning(
+                    "Scan completed with DEGRADED quality — not all scanners succeeded",
+                    scan_id=scan_id,
+                    requested=scanners_requested,
+                    used=scanners_used,
+                    failed=scanners_failed,
+                )
 
             # Generate enhanced HTML report
             html_report, vuln_counts = generate_enhanced_html_report(scan_id, image_name, merged_results)
@@ -602,7 +702,10 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) ->
                 "sbom_urls": json.dumps(sbom_urls),
 
                 # Scanner metadata
-                "scanners_used": ",".join(merged_results.get("scanners_used", [])),
+                "scanners_used": ",".join(scanners_used),
+                "scanners_requested": ",".join(scanners_requested),
+                "scanner_errors": json.dumps(scanners_failed),
+                "scan_quality": scan_quality,
                 "scan_timestamp": datetime.now().isoformat(),
                 "scan_duration_seconds": duration,
 

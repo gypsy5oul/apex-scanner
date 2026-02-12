@@ -45,11 +45,13 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     username: str
+    role: str
 
 
 class TokenData(BaseModel):
     """Decoded token data"""
     username: str
+    role: str = "admin"
     exp: datetime
     auth_method: str = "jwt"
 
@@ -129,19 +131,36 @@ def validate_credentials_or_die():
 
 # --- Password Authentication ---
 
-def authenticate_user(username: str, password: str) -> bool:
-    """Validate admin credentials using bcrypt."""
-    if username != settings.ADMIN_USERNAME:
-        return False
+def authenticate_user(username: str, password: str) -> Optional[str]:
+    """
+    Validate credentials using bcrypt.
+    Returns role string ("admin" or "user") on success, None on failure.
+    """
+    # Check admin credentials
+    if username == settings.ADMIN_USERNAME and settings.ADMIN_PASSWORD_HASH:
+        try:
+            if bcrypt.checkpw(
+                password.encode("utf-8"),
+                settings.ADMIN_PASSWORD_HASH.encode("utf-8"),
+            ):
+                return "admin"
+        except (ValueError, TypeError) as e:
+            logger.error("Admin password verification failed", error=str(e))
 
-    try:
-        return bcrypt.checkpw(
-            password.encode("utf-8"),
-            settings.ADMIN_PASSWORD_HASH.encode("utf-8"),
-        )
-    except (ValueError, TypeError) as e:
-        logger.error("Password verification failed", error=str(e))
-        return False
+    # Check normal user credentials
+    if (settings.USER_USERNAME
+            and settings.USER_PASSWORD_HASH
+            and username == settings.USER_USERNAME):
+        try:
+            if bcrypt.checkpw(
+                password.encode("utf-8"),
+                settings.USER_PASSWORD_HASH.encode("utf-8"),
+            ):
+                return "user"
+        except (ValueError, TypeError) as e:
+            logger.error("User password verification failed", error=str(e))
+
+    return None
 
 
 # --- Rate Limiting ---
@@ -183,9 +202,9 @@ def clear_login_attempts(client_ip: str) -> None:
 
 # --- JWT Token Management ---
 
-def create_access_token(username: str) -> tuple[str, int]:
+def create_access_token(username: str, role: str = "admin") -> tuple[str, int]:
     """
-    Create JWT access token.
+    Create JWT access token with role claim.
     Returns: (token, expires_in_seconds)
     """
     expires_delta = timedelta(hours=settings.JWT_EXPIRATION_HOURS)
@@ -193,6 +212,7 @@ def create_access_token(username: str) -> tuple[str, int]:
 
     payload = {
         "sub": username,
+        "role": role,
         "exp": expire,
         "iat": datetime.utcnow(),
         "type": "access",
@@ -210,11 +230,12 @@ def verify_token(token: str) -> Optional[TokenData]:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         username = payload.get("sub")
         exp = datetime.fromtimestamp(payload.get("exp"))
+        role = payload.get("role", "admin")  # Default "admin" for backward compat
 
         if username is None:
             return None
 
-        return TokenData(username=username, exp=exp, auth_method="jwt")
+        return TokenData(username=username, role=role, exp=exp, auth_method="jwt")
     except jwt.ExpiredSignatureError:
         logger.warning("Token expired")
         return None
@@ -369,8 +390,23 @@ async def get_current_user(
     )
 
 
-# Backward compatibility alias
-get_current_admin = get_current_user
+async def get_current_admin(
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
+    x_api_key: Optional[str] = Header(None),
+) -> TokenData:
+    """
+    Dependency to get current admin user.
+    Raises 401 if not authenticated, 403 if not admin role.
+    """
+    token_data = await get_current_user(credentials, x_api_key)
+
+    if token_data.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required. This action is restricted to administrators.",
+        )
+
+    return token_data
 
 
 async def get_optional_admin(
@@ -402,7 +438,8 @@ def login(username: str, password: str, request: Optional[Request] = None) -> Lo
         client_ip = request.client.host if request.client else "unknown"
         check_rate_limit(client_ip)
 
-    if not authenticate_user(username, password):
+    role = authenticate_user(username, password)
+    if role is None:
         logger.warning("Failed login attempt", username=username, client_ip=client_ip)
         if request:
             record_failed_login(client_ip)
@@ -415,13 +452,14 @@ def login(username: str, password: str, request: Optional[Request] = None) -> Lo
     if request:
         clear_login_attempts(client_ip)
 
-    token, expires_in = create_access_token(username)
+    token, expires_in = create_access_token(username, role)
 
-    logger.info("Admin login successful", username=username, client_ip=client_ip)
+    logger.info("Login successful", username=username, role=role, client_ip=client_ip)
 
     return LoginResponse(
         access_token=token,
         token_type="bearer",
         expires_in=expires_in,
         username=username,
+        role=role,
     )

@@ -43,8 +43,8 @@ router_v2 = APIRouter(prefix="/api/v2", tags=["enterprise"])
 @router_v2.post(
     "/auth/login",
     response_model=LoginResponse,
-    summary="Admin Login",
-    description="Authenticate as admin and receive JWT token",
+    summary="Login",
+    description="Authenticate and receive JWT token",
     tags=["authentication"]
 )
 async def admin_login(request: LoginRequest = Body(...), http_request: Request = None):
@@ -66,12 +66,13 @@ async def admin_login(request: LoginRequest = Body(...), http_request: Request =
     description="Verify if the current token is valid",
     tags=["authentication"]
 )
-async def verify_auth(current_admin: TokenData = Depends(get_current_admin)):
+async def verify_auth(current_user: TokenData = Depends(get_current_user)):
     """Verify if the current JWT token is valid"""
     return {
         "valid": True,
-        "username": current_admin.username,
-        "expires": current_admin.exp.isoformat()
+        "username": current_user.username,
+        "role": current_user.role,
+        "expires": current_user.exp.isoformat()
     }
 
 
@@ -81,17 +82,19 @@ async def verify_auth(current_admin: TokenData = Depends(get_current_admin)):
     description="Check authentication status (works without token)",
     tags=["authentication"]
 )
-async def auth_status(current_admin: Optional[TokenData] = Depends(get_optional_admin)):
+async def auth_status(current_user: Optional[TokenData] = Depends(get_optional_admin)):
     """Check if user is authenticated (doesn't require auth)"""
-    if current_admin:
+    if current_user:
         return {
             "authenticated": True,
-            "username": current_admin.username,
-            "expires": current_admin.exp.isoformat()
+            "username": current_user.username,
+            "role": current_user.role,
+            "expires": current_user.exp.isoformat()
         }
     return {
         "authenticated": False,
         "username": None,
+        "role": None,
         "expires": None
     }
 
@@ -625,7 +628,7 @@ async def get_image_trends(
     image_name: str = Path(..., description="Docker image name"),
     days: int = Query(30, ge=1, le=365, description="Number of days"),
     limit: int = Query(100, ge=1, le=500, description="Max data points"),
-    _user: TokenData = Depends(get_current_user)
+    _user: TokenData = Depends(get_current_admin)
 ):
     """Get vulnerability trends for an image"""
     analyzer = TrendAnalyzer()
@@ -641,7 +644,7 @@ async def get_image_trends(
 )
 async def get_global_trends(
     days: int = Query(30, ge=1, le=365, description="Number of days"),
-    _user: TokenData = Depends(get_current_user)
+    _user: TokenData = Depends(get_current_admin)
 ):
     """Get global vulnerability trends"""
     analyzer = TrendAnalyzer()
@@ -658,7 +661,7 @@ async def get_global_trends(
 async def get_top_vulnerable(
     days: int = Query(7, ge=1, le=30),
     limit: int = Query(10, ge=1, le=50),
-    _user: TokenData = Depends(get_current_user)
+    _user: TokenData = Depends(get_current_admin)
 ):
     """Get top vulnerable images"""
     analyzer = TrendAnalyzer()
@@ -677,7 +680,7 @@ async def get_top_vulnerable(
 )
 async def get_vulnerability_distribution(
     days: int = Query(30, ge=1, le=365),
-    _user: TokenData = Depends(get_current_user)
+    _user: TokenData = Depends(get_current_admin)
 ):
     """Get vulnerability distribution"""
     analyzer = TrendAnalyzer()
@@ -1931,7 +1934,7 @@ async def create_policy(
     description="List all security policies",
     tags=["policies"]
 )
-async def list_policies(_user: TokenData = Depends(get_current_user)):
+async def list_policies(_user: TokenData = Depends(get_current_admin)):
     """List all security policies"""
     from app.policy_engine import policy_engine
 
@@ -1961,7 +1964,7 @@ async def list_policies(_user: TokenData = Depends(get_current_user)):
     description="Get details of a specific security policy",
     tags=["policies"]
 )
-async def get_policy(policy_id: str = Path(..., description="Policy ID"), _user: TokenData = Depends(get_current_user)):
+async def get_policy(policy_id: str = Path(..., description="Policy ID"), _user: TokenData = Depends(get_current_admin)):
     """Get policy details"""
     from app.policy_engine import policy_engine
 

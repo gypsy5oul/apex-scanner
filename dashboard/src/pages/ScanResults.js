@@ -252,6 +252,21 @@ function ScanResults() {
         </Alert>
       )}
 
+      {result.multi_scanner?.scan_quality === 'degraded' && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          <strong>DEGRADED SCAN</strong> — Not all scanners completed successfully.
+          Requested: {result.multi_scanner.scanners_requested?.join(', ')} |
+          Succeeded: {result.multi_scanner.scanners_used?.join(', ') || 'none'}.
+          {result.multi_scanner.scanner_errors &&
+            Object.entries(result.multi_scanner.scanner_errors).map(([name, err]) => (
+              <Box key={name} sx={{ mt: 0.5 }}>
+                <strong>{name}:</strong> {err}
+              </Box>
+            ))
+          }
+        </Alert>
+      )}
+
       <Grid container spacing={3}>
         {/* Summary Card */}
         <Grid item xs={12} md={4}>
@@ -293,6 +308,24 @@ function ScanResults() {
                   <strong>Scanners:</strong>{' '}
                   {result.multi_scanner.scanners_used.join(', ')}
                 </Typography>
+              )}
+              {result.multi_scanner?.scanner_errors &&
+                Object.keys(result.multi_scanner.scanner_errors).length > 0 && (
+                <Box sx={{ mt: 1 }}>
+                  {Object.entries(result.multi_scanner.scanner_errors).map(
+                    ([name, error]) =>
+                      error && (
+                        <Chip
+                          key={name}
+                          label={`${name}: ${error.length > 60 ? error.substring(0, 60) + '...' : error}`}
+                          size="small"
+                          color="warning"
+                          variant="outlined"
+                          sx={{ mr: 0.5, mb: 0.5 }}
+                        />
+                      )
+                  )}
+                </Box>
               )}
             </Box>
           </Paper>

@@ -14,6 +14,7 @@ import {
 import ChangeHistoryIcon from '@mui/icons-material/ChangeHistory';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
+import PersonIcon from '@mui/icons-material/Person';
 import LockIcon from '@mui/icons-material/Lock';
 import { useAuth } from '../context/AuthContext';
 
@@ -29,7 +30,7 @@ function Login() {
   const [error, setError] = useState(null);
 
   // Get the page user was trying to access
-  const from = location.state?.from?.pathname || '/system';
+  const from = location.state?.from?.pathname || '/';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -54,15 +55,16 @@ function Login() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'background.default',
+        background: (theme) =>
+          `linear-gradient(135deg, ${theme.palette.grey[900]} 0%, ${theme.palette.grey[800]} 100%)`,
         p: 2,
       }}
     >
       <Paper
-        elevation={3}
+        elevation={6}
         sx={{
           p: 4,
-          maxWidth: 400,
+          maxWidth: 420,
           width: '100%',
           borderRadius: 3,
         }}
@@ -71,8 +73,8 @@ function Login() {
         <Box sx={{ textAlign: 'center', mb: 4 }}>
           <Box
             sx={{
-              width: 64,
-              height: 64,
+              width: 72,
+              height: 72,
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -85,7 +87,7 @@ function Login() {
           >
             <ChangeHistoryIcon
               sx={{
-                fontSize: 40,
+                fontSize: 44,
                 color: '#fff',
               }}
             />
@@ -102,15 +104,10 @@ function Login() {
           >
             Apex Scanner
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            Admin Login
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            Sign in to continue
           </Typography>
         </Box>
-
-        {/* Info Box */}
-        <Alert severity="info" sx={{ mb: 3 }}>
-          Admin access is required for Schedules, Base Images, Workers, and System pages.
-        </Alert>
 
         {/* Error Alert */}
         {error && (
@@ -127,11 +124,12 @@ function Login() {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             disabled={loading}
+            autoFocus
             sx={{ mb: 2 }}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
-                  <LockIcon color="action" />
+                  <PersonIcon color="action" />
                 </InputAdornment>
               ),
             }}
@@ -170,22 +168,23 @@ function Login() {
             variant="contained"
             size="large"
             disabled={loading || !username || !password}
-            sx={{ py: 1.5 }}
+            sx={{
+              py: 1.5,
+              fontWeight: 600,
+              fontSize: '1rem',
+            }}
           >
             {loading ? <CircularProgress size={24} /> : 'Sign In'}
           </Button>
         </form>
 
-        {/* Back Link */}
-        <Box sx={{ mt: 3, textAlign: 'center' }}>
-          <Button
-            variant="text"
-            onClick={() => navigate('/')}
-            sx={{ textTransform: 'none' }}
-          >
-            Back to Dashboard
-          </Button>
-        </Box>
+        <Typography
+          variant="caption"
+          color="text.disabled"
+          sx={{ display: 'block', textAlign: 'center', mt: 3 }}
+        >
+          Apex Scanner v3.0 &mdash; Enterprise Vulnerability Detection
+        </Typography>
       </Paper>
     </Box>
   );

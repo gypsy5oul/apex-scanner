@@ -4,7 +4,7 @@ Grype vulnerability scanner implementation
 import json
 import os
 import subprocess
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 from .base import BaseScanner
 
 
@@ -13,6 +13,32 @@ class GrypeScanner(BaseScanner):
 
     def __init__(self):
         super().__init__("grype")
+
+    def preflight(self) -> Tuple[bool, Optional[str]]:
+        """Check grype binary exists AND vulnerability DB is loaded."""
+        ok, err = super().preflight()
+        if not ok:
+            return ok, err
+
+        # Verify vulnerability DB is present and not stale
+        try:
+            result = subprocess.run(
+                ["grype", "db", "check"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode != 0:
+                return False, (
+                    f"Grype DB missing or stale: {result.stderr.strip()}. "
+                    "Run: grype db update"
+                )
+        except subprocess.TimeoutExpired:
+            return False, "Grype DB check timed out"
+        except OSError as exc:
+            return False, f"Grype DB check failed: {exc}"
+
+        return True, None
 
     def scan(self, image_name: str, output_path: str, timeout: int = 300) -> Dict[str, Any]:
         """

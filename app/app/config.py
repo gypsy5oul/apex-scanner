@@ -143,6 +143,16 @@ class Settings(BaseSettings):
         default="",
         description="[DEPRECATED] Plaintext admin password - will be rejected at startup. Use ADMIN_PASSWORD_HASH instead."
     )
+
+    # Normal user authentication (optional - empty = disabled)
+    USER_USERNAME: str = Field(
+        default="",
+        description="Normal user username (empty = user account disabled)"
+    )
+    USER_PASSWORD_HASH: str = Field(
+        default="",
+        description="Bcrypt hash of normal user password"
+    )
     JWT_SECRET_KEY: str = Field(
         default="",
         description="Secret key for JWT token signing. MUST be changed from default."
@@ -210,6 +220,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
+        extra = "ignore"
 
 
 # Global settings instance

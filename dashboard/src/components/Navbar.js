@@ -17,10 +17,12 @@ import Brightness7Icon from '@mui/icons-material/Brightness7';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import { useTheme as useMuiTheme } from '@mui/material/styles';
 import { useTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
 
 function Navbar({ onMenuClick }) {
   const muiTheme = useMuiTheme();
   const { mode, toggleTheme } = useTheme();
+  const { user, isAuthenticated, isAdmin } = useAuth();
 
   return (
     <AppBar
@@ -118,18 +120,18 @@ function Navbar({ onMenuClick }) {
           </Tooltip>
 
           {/* User Avatar */}
-          <Tooltip title="Apex Admin">
+          <Tooltip title={isAuthenticated() ? `${user?.username} (${isAdmin() ? 'Admin' : 'User'})` : 'Not logged in'}>
             <Avatar
               sx={{
                 ml: 1,
                 width: 36,
                 height: 36,
-                bgcolor: 'primary.main',
+                bgcolor: isAdmin() ? 'primary.main' : 'info.main',
                 cursor: 'pointer',
                 fontWeight: 600,
               }}
             >
-              A
+              {user?.username ? user.username.charAt(0).toUpperCase() : '?'}
             </Avatar>
           </Tooltip>
         </Box>

@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 from .base import BaseScanner
 
 # Shared Trivy cache path (pre-downloaded at build time)
@@ -18,6 +18,23 @@ class TrivyScanner(BaseScanner):
 
     def __init__(self):
         super().__init__("trivy")
+
+    def preflight(self) -> Tuple[bool, Optional[str]]:
+        """Check trivy binary exists AND vulnerability DB is cached."""
+        ok, err = super().preflight()
+        if not ok:
+            return ok, err
+
+        # Verify vulnerability DB directory exists (pre-downloaded at build time)
+        db_dir = os.path.join(_TRIVY_SHARED_CACHE, "db")
+        if not os.path.isdir(db_dir):
+            return False, (
+                f"Trivy vulnerability DB not found at {db_dir}. "
+                "Run: trivy image --download-db-only "
+                "--db-repository ghcr.io/aquasecurity/trivy-db:2"
+            )
+
+        return True, None
 
     def scan(self, image_name: str, output_path: str, timeout: int = 300) -> Dict[str, Any]:
         """

@@ -3,7 +3,7 @@ Syft SBOM generator implementation
 """
 import json
 import subprocess
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 from .base import BaseScanner
 
 
@@ -12,6 +12,10 @@ class SyftScanner(BaseScanner):
 
     def __init__(self):
         super().__init__("syft")
+
+    def preflight(self) -> Tuple[bool, Optional[str]]:
+        """Check syft binary exists (no local DB required)."""
+        return super().preflight()
 
     def generate_sbom(
         self,

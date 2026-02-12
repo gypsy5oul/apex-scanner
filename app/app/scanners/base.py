@@ -1,8 +1,10 @@
 """
 Base scanner class for all vulnerability scanners
 """
+import shutil
+import subprocess
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,39 @@ class BaseScanner(ABC):
         pattern = r'^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*(:[a-z0-9_.-]+)?(@sha256:[a-f0-9]{64})?$'
         return bool(re.match(pattern, image_name.lower()))
 
+    def preflight(self) -> Tuple[bool, Optional[str]]:
+        """
+        Verify the scanner binary is installed and can execute.
+
+        Subclasses should call super().preflight() first, then add
+        scanner-specific checks (e.g. DB presence).
+
+        Returns:
+            (True, None) if healthy, (False, error_message) otherwise
+        """
+        binary_path = shutil.which(self.scanner_name)
+        if not binary_path:
+            return False, f"{self.scanner_name} binary not found in PATH"
+
+        try:
+            result = subprocess.run(
+                [self.scanner_name, "version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return False, (
+                    f"{self.scanner_name} version check failed "
+                    f"(exit {result.returncode}): {result.stderr.strip()}"
+                )
+        except subprocess.TimeoutExpired:
+            return False, f"{self.scanner_name} version check timed out"
+        except OSError as exc:
+            return False, f"{self.scanner_name} cannot execute: {exc}"
+
+        return True, None
+
     def get_scanner_version(self) -> Optional[str]:
         """
         Get the version of the scanner binary
@@ -65,7 +100,6 @@ class BaseScanner(ABC):
         Returns:
             Version string or None if unavailable
         """
-        import subprocess
         try:
             result = subprocess.run(
                 [self.scanner_name, "version"],

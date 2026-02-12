@@ -30,7 +30,7 @@ export const AuthProvider = ({ children }) => {
           const response = await axios.get(`${API_BASE_URL}/api/v2/auth/verify`, {
             headers: { Authorization: `Bearer ${token}` }
           });
-          setUser({ username: response.data.username });
+          setUser({ username: response.data.username, role: response.data.role || 'admin' });
         } catch (error) {
           // Token invalid, clear it
           localStorage.removeItem('auth_token');
@@ -51,10 +51,10 @@ export const AuthProvider = ({ children }) => {
         password
       });
 
-      const { access_token, username: user } = response.data;
+      const { access_token, username: user, role } = response.data;
       localStorage.setItem('auth_token', access_token);
       setToken(access_token);
-      setUser({ username: user });
+      setUser({ username: user, role: role });
 
       return { success: true };
     } catch (error) {
@@ -75,6 +75,10 @@ export const AuthProvider = ({ children }) => {
     return !!token && !!user;
   };
 
+  const isAdmin = () => {
+    return !!user && user.role === 'admin';
+  };
+
   const getAuthHeader = () => {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
@@ -86,6 +90,7 @@ export const AuthProvider = ({ children }) => {
     login,
     logout,
     isAuthenticated,
+    isAdmin,
     getAuthHeader
   };
 

@@ -3,6 +3,7 @@ Vulnerability Trends Analysis
 Track and analyze vulnerability trends over time
 """
 import json
+import redis
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from collections import defaultdict

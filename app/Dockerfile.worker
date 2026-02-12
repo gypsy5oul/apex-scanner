@@ -10,7 +10,7 @@ COPY . /app
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install scanner binaries with retry logic and fallback
+# Install scanner binaries with retry logic — ALL MUST SUCCEED
 RUN set -e; \
     # Function to download with retries
     download_with_retry() { \
@@ -28,7 +28,7 @@ RUN set -e; \
             sleep 5; \
             attempt=$((attempt + 1)); \
         done; \
-        echo "Failed to download $url after $max_attempts attempts"; \
+        echo "FATAL: Failed to download $url after $max_attempts attempts"; \
         return 1; \
     }; \
     \
@@ -52,7 +52,7 @@ RUN set -e; \
     rm /tmp/trivy.tar.gz && \
     echo "Trivy installed successfully" && \
     \
-    # Install Syft
+    # Install Syft — MANDATORY, build fails if missing
     echo "Installing Syft v1.38.2..."; \
     download_with_retry \
         "https://github.com/anchore/syft/releases/download/v1.38.2/syft_1.38.2_linux_amd64.tar.gz" \
@@ -60,19 +60,30 @@ RUN set -e; \
     tar -xzf /tmp/syft.tar.gz -C /usr/local/bin syft && \
     chmod +x /usr/local/bin/syft && \
     rm /tmp/syft.tar.gz && \
-    echo "Syft installed successfully" || \
-    (echo "WARNING: Syft installation failed, but continuing..." && exit 0)
+    echo "Syft installed successfully"
 
 # Ensure reports and sbom directories exist
 RUN mkdir -p /var/www/html/reports /var/www/html/sboms && chmod -R 755 /var/www/html/reports /var/www/html/sboms
 
-# Verify installations
-RUN grype version && trivy --version && syft version
+# Verify all scanner binaries execute correctly
+RUN echo "=== Verifying scanner binaries ===" && \
+    grype version && \
+    trivy --version && \
+    syft version && \
+    echo "=== All scanner binaries verified ==="
 
 # Pre-download scanner DBs at build time to avoid download failures at runtime
 RUN trivy image --download-db-only --db-repository ghcr.io/aquasecurity/trivy-db:2
 RUN trivy image --download-java-db-only --java-db-repository ghcr.io/aquasecurity/trivy-java-db:1
 RUN grype db update
+
+# Verify DBs were actually downloaded — fail build if not
+RUN echo "=== Verifying scanner databases ===" && \
+    test -d /root/.cache/trivy/db || (echo "FATAL: Trivy vulnerability DB not found" && exit 1) && \
+    echo "Trivy DB: OK" && \
+    grype db check || (echo "FATAL: Grype DB validation failed" && exit 1) && \
+    echo "Grype DB: OK" && \
+    echo "=== All scanner databases verified ==="
 
 # Expose relevant ports (not required for worker, but useful for debugging)
 EXPOSE 8000

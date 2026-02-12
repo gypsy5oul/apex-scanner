@@ -16,7 +16,7 @@ import redis
 
 from app.tasks import scan_image, batch_scan_images
 from app.config import settings, get_redis_client
-from app.auth import get_current_user, TokenData
+from app.auth import get_current_user, get_current_admin, TokenData
 from app.logging_config import get_logger, LogContext
 from app.metrics import (
     SCANS_TOTAL, SCANS_IN_PROGRESS, BATCH_SCANS_TOTAL, BATCH_SIZE,
@@ -189,7 +189,10 @@ class VulnerabilityCount(BaseModel):
 
 class MultiScannerData(BaseModel):
     """Multi-scanner specific data"""
-    scanners_used: List[str] = Field(default_factory=list, description="List of scanners used")
+    scanners_requested: List[str] = Field(default_factory=list, description="Scanners that were attempted")
+    scanners_used: List[str] = Field(default_factory=list, description="Scanners that succeeded")
+    scanner_errors: Dict[str, str] = Field(default_factory=dict, description="Errors from failed/disabled scanners")
+    scan_quality: str = Field("full", description="'full' if all scanners succeeded, 'degraded' if some failed")
     grype_unique: int = Field(0, description="Vulnerabilities found only by Grype")
     trivy_unique: int = Field(0, description="Vulnerabilities found only by Trivy")
     both_scanners: int = Field(0, description="Vulnerabilities found by both scanners")
@@ -312,9 +315,21 @@ def parse_scan_result(scan_id: str, result: Dict[str, str]) -> EnhancedScanResul
     )
 
     scanners_used = result.get("scanners_used", "").split(",") if result.get("scanners_used") else []
+    scanners_requested = result.get("scanners_requested", "").split(",") if result.get("scanners_requested") else scanners_used
+
+    # Parse scanner errors (JSON string stored in Redis)
+    try:
+        scanner_errors = json.loads(result.get("scanner_errors", "{}") or "{}")
+    except json.JSONDecodeError:
+        scanner_errors = {}
+
+    scan_quality = result.get("scan_quality", "full" if not scanner_errors else "degraded")
 
     multi_scanner = MultiScannerData(
+        scanners_requested=scanners_requested,
         scanners_used=scanners_used,
+        scanner_errors=scanner_errors,
+        scan_quality=scan_quality,
         grype_unique=result.get("grype_unique_count", 0),
         trivy_unique=result.get("trivy_unique_count", 0),
         both_scanners=result.get("both_scanners_count", 0),
@@ -684,7 +699,7 @@ async def get_scan_result(
 async def compare_scans(
     scan_id_1: str = Path(..., description="First scan ID", pattern=UUID_PATTERN),
     scan_id_2: str = Path(..., description="Second scan ID (usually newer)", pattern=UUID_PATTERN),
-    _user: TokenData = Depends(get_current_user)
+    _user: TokenData = Depends(get_current_admin)
 ):
     """Compare vulnerabilities between two scans"""
     redis_client = get_redis_client()
@@ -767,7 +782,7 @@ async def search_vulnerabilities(
     image: Optional[str] = Query(None, description="Image name filter"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Result offset"),
-    _user: TokenData = Depends(get_current_user)
+    _user: TokenData = Depends(get_current_admin)
 ):
     """Search for vulnerabilities across all scans"""
     redis_client = get_redis_client()

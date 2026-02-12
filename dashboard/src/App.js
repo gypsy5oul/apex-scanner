@@ -72,33 +72,41 @@ function AppRoutes() {
   return (
     <MainLayout>
       <Routes>
-        {/* Public Routes */}
+        {/* User Routes — accessible to all authenticated users */}
         <Route path="/" element={<Dashboard />} />
         <Route path="/scan" element={<ScanPage />} />
         <Route path="/scan/:scanId" element={<ScanResults />} />
         <Route path="/batch" element={<BatchScan />} />
         <Route path="/history" element={<History />} />
-        <Route path="/compare" element={<Compare />} />
-        <Route path="/search" element={<Search />} />
-        <Route path="/trends" element={<Trends />} />
         <Route path="/iac-scan" element={<IacScan />} />
-        <Route path="/policies" element={<Policies />} />
 
-        {/* Protected Admin Routes */}
+        {/* Admin-Only Routes — analysis & management */}
+        <Route path="/compare" element={
+          <ProtectedRoute requiredRole="admin"><Compare /></ProtectedRoute>
+        } />
+        <Route path="/search" element={
+          <ProtectedRoute requiredRole="admin"><Search /></ProtectedRoute>
+        } />
+        <Route path="/trends" element={
+          <ProtectedRoute requiredRole="admin"><Trends /></ProtectedRoute>
+        } />
+        <Route path="/policies" element={
+          <ProtectedRoute requiredRole="admin"><Policies /></ProtectedRoute>
+        } />
         <Route path="/schedules" element={
-          <ProtectedRoute><Schedules /></ProtectedRoute>
+          <ProtectedRoute requiredRole="admin"><Schedules /></ProtectedRoute>
         } />
         <Route path="/base-images" element={
-          <ProtectedRoute><BaseImages /></ProtectedRoute>
+          <ProtectedRoute requiredRole="admin"><BaseImages /></ProtectedRoute>
         } />
         <Route path="/base-images/:imageName/:tag" element={
-          <ProtectedRoute><BaseImageDetail /></ProtectedRoute>
+          <ProtectedRoute requiredRole="admin"><BaseImageDetail /></ProtectedRoute>
         } />
         <Route path="/workers" element={
-          <ProtectedRoute><WorkerMonitor /></ProtectedRoute>
+          <ProtectedRoute requiredRole="admin"><WorkerMonitor /></ProtectedRoute>
         } />
         <Route path="/system" element={
-          <ProtectedRoute><SystemStatus /></ProtectedRoute>
+          <ProtectedRoute requiredRole="admin"><SystemStatus /></ProtectedRoute>
         } />
       </Routes>
     </MainLayout>

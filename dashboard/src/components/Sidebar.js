@@ -58,7 +58,7 @@ const enterpriseMenuItems = [
 function Sidebar({ mobileOpen, onClose, drawerWidth }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAuthenticated, user, logout } = useAuth();
+  const { isAuthenticated, isAdmin, user, logout } = useAuth();
 
   const MenuSection = ({ title, items }) => (
     <>
@@ -188,11 +188,17 @@ function Sidebar({ mobileOpen, onClose, drawerWidth }) {
 
       <Box sx={{ flexGrow: 1, overflow: 'auto', py: 1 }}>
         <MenuSection title="Scanning" items={mainMenuItems} />
-        <Divider sx={{ my: 1.5, mx: 2 }} />
-        <MenuSection title="Analysis" items={analysisMenuItems} />
 
-        {/* Enterprise Section - Only show when authenticated */}
-        {isAuthenticated() && (
+        {/* Analysis Section - Admin only */}
+        {isAdmin() && (
+          <>
+            <Divider sx={{ my: 1.5, mx: 2 }} />
+            <MenuSection title="Analysis" items={analysisMenuItems} />
+          </>
+        )}
+
+        {/* Enterprise Section - Admin only */}
+        {isAdmin() && (
           <>
             <Divider sx={{ my: 1.5, mx: 2 }} />
             <MenuSection title="Admin" items={enterpriseMenuItems} />
@@ -217,9 +223,9 @@ function Sidebar({ mobileOpen, onClose, drawerWidth }) {
           {isAuthenticated() ? (
             <>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                <AdminPanelSettingsIcon sx={{ fontSize: 18, color: 'success.main' }} />
-                <Typography variant="caption" color="success.main" fontWeight={600}>
-                  Admin Mode
+                <AdminPanelSettingsIcon sx={{ fontSize: 18, color: isAdmin() ? 'success.main' : 'info.main' }} />
+                <Typography variant="caption" color={isAdmin() ? 'success.main' : 'info.main'} fontWeight={600}>
+                  {isAdmin() ? 'Admin Mode' : 'User Mode'}
                 </Typography>
               </Box>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
@@ -240,7 +246,7 @@ function Sidebar({ mobileOpen, onClose, drawerWidth }) {
           ) : (
             <>
               <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-                Admin features hidden
+                Login for full access
               </Typography>
               <Button
                 size="small"
@@ -251,7 +257,7 @@ function Sidebar({ mobileOpen, onClose, drawerWidth }) {
                 fullWidth
                 sx={{ textTransform: 'none' }}
               >
-                Admin Login
+                Login
               </Button>
             </>
           )}
