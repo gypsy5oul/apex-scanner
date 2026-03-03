@@ -6,7 +6,7 @@ import os
 import json
 import uuid
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Path, Body, WebSocket, WebSocketDisconnect, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse, Response
@@ -17,7 +17,8 @@ from app.auth import (
     LoginRequest, LoginResponse, TokenData,
     login, get_current_user, get_current_admin, get_optional_admin,
     APIKeyCreate, APIKeyResponse, APIKeyInfo,
-    create_api_key, list_api_keys, revoke_api_key
+    create_api_key, list_api_keys, revoke_api_key,
+    set_auth_cookie, clear_auth_cookie,
 )
 from app.logging_config import get_logger
 from app.scheduler import ScheduleManager, GoogleChatNotifier
@@ -50,6 +51,7 @@ router_v2 = APIRouter(prefix="/api/v2", tags=["enterprise"])
 async def admin_login(request: LoginRequest = Body(...), http_request: Request = None):
     """
     Login with admin credentials to access protected endpoints.
+    Sets an httpOnly cookie for browser sessions AND returns user info in the response body.
 
     Protected endpoints include:
     - Scheduled scans management
@@ -57,7 +59,36 @@ async def admin_login(request: LoginRequest = Body(...), http_request: Request =
     - System status and updates
     - Worker monitoring
     """
-    return login(request.username, request.password, request=http_request)
+    login_response = login(request.username, request.password, request=http_request)
+
+    # Build JSON response with user info (token NOT included in body for cookie-based auth)
+    response = JSONResponse(content={
+        "username": login_response.username,
+        "role": login_response.role,
+        "expires_in": login_response.expires_in,
+        "token_type": "bearer",
+        # Still include access_token for backward compatibility with API clients
+        # that use header-based auth (CLI tools, CI/CD, etc.)
+        "access_token": login_response.access_token,
+    })
+
+    # Set httpOnly cookie for browser sessions
+    set_auth_cookie(response, login_response.access_token, login_response.expires_in)
+
+    return response
+
+
+@router_v2.post(
+    "/auth/logout",
+    summary="Logout",
+    description="Clear authentication cookie and end session",
+    tags=["authentication"]
+)
+async def logout():
+    """Logout by clearing the httpOnly authentication cookie."""
+    response = JSONResponse(content={"message": "Logged out successfully"})
+    clear_auth_cookie(response)
+    return response
 
 
 @router_v2.get(
@@ -67,7 +98,7 @@ async def admin_login(request: LoginRequest = Body(...), http_request: Request =
     tags=["authentication"]
 )
 async def verify_auth(current_user: TokenData = Depends(get_current_user)):
-    """Verify if the current JWT token is valid"""
+    """Verify if the current JWT token is valid (works with cookie or header)"""
     return {
         "valid": True,
         "username": current_user.username,
@@ -274,8 +305,9 @@ async def run_schedule_now(
 
         if existing_scan_id:
             existing_status = redis_client.hget(existing_scan_id, "status")
-            if existing_status in ["in_progress", "completed"]:
-                # Skip this image, use existing scan
+            if existing_status == "in_progress":
+                # Skip only while scan is still running.
+                # Completed scans may be stale for mutable tags.
                 scan_ids.append(existing_scan_id)
                 skipped_images.append(image)
                 continue
@@ -291,7 +323,7 @@ async def run_schedule_now(
             "status": "in_progress",
             "image_name": image,
             "schedule_name": name,
-            "created_at": datetime.utcnow().isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat()
         })
         redis_client.expire(scan_id, settings.SCAN_RESULT_TTL)
 
@@ -1731,7 +1763,7 @@ async def iac_scan_content_endpoint(request: IacScanRequest = Body(...), _user: 
         return {
             "scan_id": task.id,
             "status": "failed",
-            "scanned_at": datetime.utcnow().isoformat(),
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
             "source": f"file:{request.filename}",
             "files_scanned": 0,
             "summary": {"critical": 0, "high": 0, "medium": 0, "low": 0},
@@ -1829,7 +1861,7 @@ async def iac_scan_with_policy_endpoint(
         return {
             "scan_id": task.id,
             "status": "failed",
-            "scanned_at": datetime.utcnow().isoformat(),
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
             "source": f"file:{request.filename}",
             "files_scanned": 0,
             "summary": {"critical": 0, "high": 0, "medium": 0, "low": 0},
@@ -2186,4 +2218,3 @@ async def revoke_api_key_endpoint(
     if not revoked:
         raise HTTPException(status_code=404, detail="API key not found")
     return {"status": "revoked", "key_id": key_id}
-

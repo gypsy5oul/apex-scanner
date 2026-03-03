@@ -53,6 +53,26 @@ import {
 import SeverityChip from '../components/SeverityChip';
 import { VulnerabilityDoughnut } from '../components/VulnerabilityChart';
 
+// Rewrite report/SBOM URLs to use the actual API host instead of whatever the backend stored
+const getApiHost = () => {
+  if (window.REACT_APP_API_URL) return window.REACT_APP_API_URL;
+  if (process.env.REACT_APP_API_URL) return process.env.REACT_APP_API_URL;
+  return `${window.location.protocol}//${window.location.hostname}:7070`;
+};
+
+const fixReportUrl = (url) => {
+  if (!url) return url;
+  try {
+    const parsed = new URL(url);
+    const apiHost = new URL(getApiHost());
+    parsed.protocol = apiHost.protocol;
+    parsed.host = apiHost.host;
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+};
+
 function ScanResults() {
   const { scanId } = useParams();
   const [result, setResult] = useState(null);
@@ -457,7 +477,7 @@ function ScanResults() {
                 <Button
                   variant="contained"
                   component={Link}
-                  href={result.report_url}
+                  href={fixReportUrl(result.report_url)}
                   target="_blank"
                   endIcon={<OpenInNewIcon />}
                 >
@@ -467,7 +487,7 @@ function ScanResults() {
                   <Button
                     variant="outlined"
                     component={Link}
-                    href={result.sbom.html_report_url}
+                    href={fixReportUrl(result.sbom.html_report_url)}
                     target="_blank"
                     endIcon={<OpenInNewIcon />}
                   >

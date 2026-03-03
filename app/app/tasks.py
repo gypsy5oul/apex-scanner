@@ -8,7 +8,7 @@ import socket
 import traceback
 from celery import Celery, group
 from celery.signals import worker_ready
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any
 
 from app.config import settings, get_redis_client
@@ -1385,7 +1385,7 @@ def scan_iac_content(self, content: str, filename: str = "Dockerfile") -> Dict[s
         return {
             "scan_id": scan_id,
             "status": "completed",
-            "scanned_at": datetime.utcnow().isoformat(),
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
             "source": f"file:{filename}",
             "files_scanned": files_scanned,
             "summary": summary,
@@ -1398,7 +1398,7 @@ def scan_iac_content(self, content: str, filename: str = "Dockerfile") -> Dict[s
         return {
             "scan_id": scan_id,
             "status": "failed",
-            "scanned_at": datetime.utcnow().isoformat(),
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
             "source": f"file:{filename}",
             "files_scanned": 0,
             "summary": {"critical": 0, "high": 0, "medium": 0, "low": 0},
@@ -1411,7 +1411,7 @@ def scan_iac_content(self, content: str, filename: str = "Dockerfile") -> Dict[s
         return {
             "scan_id": scan_id,
             "status": "failed",
-            "scanned_at": datetime.utcnow().isoformat(),
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
             "source": f"file:{filename}",
             "files_scanned": 0,
             "summary": {"critical": 0, "high": 0, "medium": 0, "low": 0},

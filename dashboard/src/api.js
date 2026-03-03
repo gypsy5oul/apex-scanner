@@ -14,14 +14,12 @@ const getApiUrl = () => {
 
 const API_BASE_URL = getApiUrl();
 
-// Get auth token from localStorage
-const getAuthToken = () => localStorage.getItem('auth_token');
-
 const api = axios.create({
   baseURL: `${API_BASE_URL}/api/v1`,
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true,  // Send httpOnly cookies automatically
 });
 
 const apiV2 = axios.create({
@@ -29,23 +27,14 @@ const apiV2 = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true,  // Send httpOnly cookies automatically
 });
-
-// Auth header interceptor - shared for both v1 and v2
-const addAuthHeader = (config) => {
-  const token = getAuthToken();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-};
 
 const onRequestError = (error) => Promise.reject(error);
 
 // Handle 401 errors (redirect to login)
 const on401Response = (error) => {
   if (error.response?.status === 401) {
-    localStorage.removeItem('auth_token');
     if (window.location.pathname !== '/login') {
       window.location.href = '/login';
     }
@@ -53,17 +42,18 @@ const on401Response = (error) => {
   return Promise.reject(error);
 };
 
-// Add auth interceptors to BOTH v1 and v2 (all endpoints now require auth)
-api.interceptors.request.use(addAuthHeader, onRequestError);
+// Add interceptors to BOTH v1 and v2
+api.interceptors.request.use((config) => config, onRequestError);
 api.interceptors.response.use((response) => response, on401Response);
 
-apiV2.interceptors.request.use(addAuthHeader, onRequestError);
+apiV2.interceptors.request.use((config) => config, onRequestError);
 apiV2.interceptors.response.use((response) => response, on401Response);
 
 // ============ V1 Endpoints ============
 
 // Scan endpoints
-export const startScan = (imageName) => api.post('/scan', { image_name: imageName });
+export const startScan = (imageName, skipCache = false) =>
+  api.post('/scan', { image_name: imageName, skip_cache: skipCache });
 export const getScanResult = (scanId) => api.get(`/scan/${scanId}`);
 export const getReport = (scanId) => api.get(`/reports/${scanId}`);
 
@@ -95,9 +85,12 @@ export const getRecentScans = (limit = 5) => api.get('/scans/recent', { params: 
 export const getApiInfo = () => api.get('/api-info');
 
 // Health check
-export const healthCheck = () => axios.get(`${API_BASE_URL}/health`);
+export const healthCheck = () => axios.get(`${API_BASE_URL}/health`, { withCredentials: true });
 
 // ============ V2 Enterprise Endpoints ============
+
+// Auth
+export const logoutApi = () => apiV2.post('/auth/logout');
 
 // Scheduled Scans
 export const getSchedules = () => apiV2.get('/schedules');

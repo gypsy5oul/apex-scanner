@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
 const AuthContext = createContext(null);
@@ -19,79 +19,82 @@ const API_BASE_URL = getApiUrl();
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem('auth_token'));
   const [loading, setLoading] = useState(true);
 
-  // Check if token is valid on mount
-  useEffect(() => {
-    const verifyToken = async () => {
-      if (token) {
-        try {
-          const response = await axios.get(`${API_BASE_URL}/api/v2/auth/verify`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          setUser({ username: response.data.username, role: response.data.role || 'admin' });
-        } catch (error) {
-          // Token invalid, clear it
-          localStorage.removeItem('auth_token');
-          setToken(null);
-          setUser(null);
-        }
+  // Check if user is authenticated on mount by calling /auth/status
+  // The httpOnly cookie is sent automatically by the browser
+  const checkAuthStatus = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/v2/auth/status`, {
+        withCredentials: true,
+      });
+      if (response.data.authenticated) {
+        setUser({
+          username: response.data.username,
+          role: response.data.role || 'admin',
+        });
+      } else {
+        setUser(null);
       }
-      setLoading(false);
-    };
+    } catch (error) {
+      setUser(null);
+    }
+    setLoading(false);
+  }, []);
 
-    verifyToken();
-  }, [token]);
+  useEffect(() => {
+    checkAuthStatus();
+  }, [checkAuthStatus]);
 
   const login = async (username, password) => {
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/v2/auth/login`, {
-        username,
-        password
-      });
+      const response = await axios.post(
+        `${API_BASE_URL}/api/v2/auth/login`,
+        { username, password },
+        { withCredentials: true }
+      );
 
-      const { access_token, username: user, role } = response.data;
-      localStorage.setItem('auth_token', access_token);
-      setToken(access_token);
+      // The httpOnly cookie is set by the server response.
+      // We only use the response body for user info (not the token).
+      const { username: user, role } = response.data;
       setUser({ username: user, role: role });
 
       return { success: true };
     } catch (error) {
       return {
         success: false,
-        error: error.response?.data?.detail || 'Login failed'
+        error: error.response?.data?.detail || 'Login failed',
       };
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('auth_token');
-    setToken(null);
+  const logout = async () => {
+    try {
+      // Call backend to clear the httpOnly cookie
+      await axios.post(`${API_BASE_URL}/api/v2/auth/logout`, {}, {
+        withCredentials: true,
+      });
+    } catch (error) {
+      // Even if the request fails, clear local state
+    }
     setUser(null);
   };
 
   const isAuthenticated = () => {
-    return !!token && !!user;
+    return !!user;
   };
 
   const isAdmin = () => {
     return !!user && user.role === 'admin';
   };
 
-  const getAuthHeader = () => {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  };
-
   const value = {
     user,
-    token,
     loading,
     login,
     logout,
     isAuthenticated,
     isAdmin,
-    getAuthHeader
   };
 
   return (

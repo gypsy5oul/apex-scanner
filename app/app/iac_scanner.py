@@ -9,7 +9,7 @@ import shutil
 import tempfile
 import subprocess
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
 from enum import Enum
 
@@ -94,7 +94,7 @@ class IacScanner:
             return IacScanResult(
                 scan_id=scan_id,
                 status="failed",
-                scanned_at=datetime.utcnow().isoformat(),
+                scanned_at=datetime.now(timezone.utc).isoformat(),
                 scan_type=scan_type.value,
                 source=f"file:{filename}",
                 summary={"critical": 0, "high": 0, "medium": 0, "low": 0},
@@ -139,7 +139,7 @@ class IacScanner:
             return IacScanResult(
                 scan_id=scan_id,
                 status="failed",
-                scanned_at=datetime.utcnow().isoformat(),
+                scanned_at=datetime.now(timezone.utc).isoformat(),
                 scan_type=scan_type.value,
                 source=f"files:{len(files)} files",
                 summary={"critical": 0, "high": 0, "medium": 0, "low": 0},
@@ -220,7 +220,7 @@ class IacScanner:
             return IacScanResult(
                 scan_id=scan_id,
                 status="failed",
-                scanned_at=datetime.utcnow().isoformat(),
+                scanned_at=datetime.now(timezone.utc).isoformat(),
                 scan_type=scan_type.value,
                 source=f"repo:{repo_url}",
                 summary={"critical": 0, "high": 0, "medium": 0, "low": 0},
@@ -233,7 +233,7 @@ class IacScanner:
             return IacScanResult(
                 scan_id=scan_id,
                 status="failed",
-                scanned_at=datetime.utcnow().isoformat(),
+                scanned_at=datetime.now(timezone.utc).isoformat(),
                 scan_type=scan_type.value,
                 source=f"repo:{repo_url}",
                 summary={"critical": 0, "high": 0, "medium": 0, "low": 0},
@@ -331,7 +331,7 @@ class IacScanner:
             return IacScanResult(
                 scan_id=scan_id,
                 status="completed",
-                scanned_at=datetime.utcnow().isoformat(),
+                scanned_at=datetime.now(timezone.utc).isoformat(),
                 scan_type="iac",
                 source=source,
                 summary=summary,

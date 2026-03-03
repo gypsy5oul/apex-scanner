@@ -6,7 +6,7 @@ import os
 import json
 import uuid
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Path, Body, Depends
 from fastapi.responses import JSONResponse, FileResponse
@@ -115,6 +115,10 @@ class ScanRequest(BaseModel):
         max_length=500,
         examples=["nginx:latest"]
     )
+    skip_cache: bool = Field(
+        default=False,
+        description="If true, bypass the digest cache and force a fresh scan even if a cached result exists for this image digest"
+    )
 
     @field_validator('image_name')
     @classmethod
@@ -129,7 +133,7 @@ class ScanRequest(BaseModel):
 
     model_config = {
         "json_schema_extra": {
-            "example": {"image_name": "ubuntu:20.04"}
+            "example": {"image_name": "ubuntu:20.04", "skip_cache": False}
         }
     }
 
@@ -411,7 +415,9 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
     with LogContext(image=request.image_name, operation="start_scan"):
         try:
             # === DEDUPLICATION CHECK ===
-            # Check if a scan for this image is already in progress or recently completed
+            # Only deduplicate in-progress scans.
+            # Completed scans must not be reused by tag because mutable tags
+            # (e.g., :latest) can be repushed with new content.
             dedup_key = f"scan_dedup:{request.image_name}"
             existing_scan_id = redis_client.get(dedup_key)
 
@@ -429,18 +435,7 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
                         status=ScanStatus.IN_PROGRESS,
                         message="Scan already in progress for this image"
                     )
-                elif existing_status == "completed":
-                    logger.info(
-                        "Returning recently completed scan (deduplication)",
-                        scan_id=existing_scan_id,
-                        image=request.image_name
-                    )
-                    return ScanResponse(
-                        scan_id=existing_scan_id,
-                        status=ScanStatus.COMPLETED,
-                        message="Scan recently completed for this image"
-                    )
-                # If status is failed or missing, allow new scan
+                # If status is completed/failed/missing, allow a new scan.
 
             scan_id = str(uuid.uuid4())
 
@@ -467,7 +462,7 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
                 "total_packages": 0,
                 "report_url": "",
                 "sbom_urls": "{}",
-                "created_at": datetime.utcnow().isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat()
             })
             redis_client.expire(scan_id, settings.SCAN_RESULT_TTL)
 
@@ -485,7 +480,10 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
             SCANS_IN_PROGRESS.inc()
 
             # Submit scan task to Celery
-            scan_image.apply_async(args=[request.image_name, scan_id])
+            scan_image.apply_async(
+                args=[request.image_name, scan_id],
+                kwargs={"skip_cache": request.skip_cache}
+            )
 
             logger.info(
                 "Scan task submitted",
@@ -549,7 +547,7 @@ async def start_batch_scan(request: BatchScanRequest = Body(...), _user: TokenDa
                     "total_packages": 0,
                     "report_url": "",
                     "sbom_urls": "{}",
-                    "created_at": datetime.utcnow().isoformat()
+                    "created_at": datetime.now(timezone.utc).isoformat()
                 })
                 redis_client.expire(scan_id, settings.SCAN_RESULT_TTL)
 
@@ -570,7 +568,7 @@ async def start_batch_scan(request: BatchScanRequest = Body(...), _user: TokenDa
                 "images": json.dumps(request.images),
                 "total_images": len(request.images),
                 "status": "in_progress",
-                "created_at": datetime.utcnow().isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat()
             })
             redis_client.expire(f"batch:{batch_id}", settings.SCAN_RESULT_TTL)
 

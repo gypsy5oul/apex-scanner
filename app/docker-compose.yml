@@ -2,7 +2,7 @@ version: "3.8"
 
 # Shared environment variables for all app services
 x-common-env: &common-env
-  TZ: Asia/Kolkata
+  TZ: ${TZ:-UTC}
   REDIS_URL: redis://redis:6379/0
   REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
   REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-false}
@@ -23,6 +23,7 @@ x-auth-env: &auth-env
   LOGIN_LOCKOUT_SECONDS: ${LOGIN_LOCKOUT_SECONDS:-900}
   USER_USERNAME: ${USER_USERNAME:-}
   USER_PASSWORD_HASH: ${USER_PASSWORD_HASH:-}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
 
 services:
   api:
@@ -57,6 +58,8 @@ services:
           memory: 512M
 
   # Primary worker for high-priority scans (single image scans)
+  # Workers do NOT need Docker socket access — scanners (Grype, Trivy, Syft)
+  # pull images directly from registries using their own clients.
   worker-high:
     build:
       context: .
@@ -73,13 +76,11 @@ services:
         condition: service_healthy
     environment:
       <<: *common-env
-      DOCKER_HOST: unix:///var/run/docker.sock
       WORKER_TYPE: high_priority
     volumes:
       - /opt/scanner-reports:/var/www/html/reports
       - /opt/scanner-sboms:/var/www/html/sboms
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /root/.docker/config.json:/root/.docker/config.json:ro
+      - ${DOCKER_CONFIG_PATH:-/dev/null}:/home/scanner/.docker/config.json:ro
     restart: unless-stopped
     deploy:
       resources:
@@ -107,13 +108,11 @@ services:
         condition: service_healthy
     environment:
       <<: *common-env
-      DOCKER_HOST: unix:///var/run/docker.sock
       WORKER_TYPE: batch
     volumes:
       - /opt/scanner-reports:/var/www/html/reports
       - /opt/scanner-sboms:/var/www/html/sboms
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /root/.docker/config.json:/root/.docker/config.json:ro
+      - ${DOCKER_CONFIG_PATH:-/dev/null}:/home/scanner/.docker/config.json:ro
     restart: unless-stopped
     deploy:
       mode: replicated
@@ -143,12 +142,10 @@ services:
         condition: service_healthy
     environment:
       <<: *common-env
-      DOCKER_HOST: unix:///var/run/docker.sock
       WORKER_TYPE: system
     volumes:
       - /opt/scanner-reports:/var/www/html/reports
       - /opt/scanner-sboms:/var/www/html/sboms
-      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
     deploy:
       resources:
@@ -174,7 +171,37 @@ services:
       <<: *common-env
     restart: unless-stopped
 
+  # Docker socket proxy — restricts Docker API access to read-only container listing.
+  # Only the autoscaler needs Docker access (to count worker containers).
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: docker_socket_proxy
+    environment:
+      CONTAINERS: 1
+      SERVICES: 0
+      TASKS: 0
+      NETWORKS: 0
+      VOLUMES: 0
+      IMAGES: 0
+      EXEC: 0
+      POST: 0
+      BUILD: 0
+      COMMIT: 0
+      SWARM: 0
+      NODES: 0
+      SECRETS: 0
+      CONFIGS: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+
   # Auto-scaler service - monitors queue and scales workers
+  # Uses Docker socket proxy for restricted read-only container listing
   autoscaler:
     build:
       context: .
@@ -184,16 +211,16 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      docker-proxy:
+        condition: service_started
     environment:
       <<: *common-env
-      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_HOST: tcp://docker-proxy:2375
       MIN_WORKERS: ${MIN_WORKERS:-2}
       MAX_WORKERS: ${MAX_WORKERS:-10}
       SCALE_UP_THRESHOLD: ${SCALE_UP_THRESHOLD:-10}
       SCALE_DOWN_THRESHOLD: ${SCALE_DOWN_THRESHOLD:-2}
       CHECK_INTERVAL: ${AUTOSCALE_CHECK_INTERVAL:-30}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
     deploy:
       resources:
@@ -267,11 +294,11 @@ services:
       dockerfile: Dockerfile
     container_name: scanner_dashboard
     ports:
-      - "${DASHBOARD_PORT:-3001}:80"
+      - "${DASHBOARD_PORT:-3001}:8080"
     depends_on:
       - api
     environment:
-      - TZ=Asia/Kolkata
+      - TZ=${TZ:-UTC}
       - REACT_APP_API_URL=${DASHBOARD_API_URL:-http://localhost:7070}
     restart: unless-stopped
 

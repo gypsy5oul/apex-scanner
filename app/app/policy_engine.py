@@ -5,7 +5,7 @@ Define policies to pass/fail scans based on vulnerability severity, EPSS scores,
 import json
 import uuid
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
 from enum import Enum
 
@@ -214,7 +214,7 @@ class PolicyEngine:
     ) -> Policy:
         """Create a new policy"""
         policy_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         policy = Policy(
             id=policy_id,
@@ -271,7 +271,7 @@ class PolicyEngine:
         if apply_to is not None:
             policy.apply_to = apply_to
 
-        policy.updated_at = datetime.utcnow().isoformat()
+        policy.updated_at = datetime.now(timezone.utc).isoformat()
 
         # Update in Redis
         get_redis_client().hset(POLICIES_KEY, policy_id, json.dumps(asdict(policy)))
@@ -315,7 +315,7 @@ class PolicyEngine:
                 status="skipped",
                 violations=[],
                 summary={"fail": 0, "warn": 0, "pass": len(vulnerabilities)},
-                evaluated_at=datetime.utcnow().isoformat()
+                evaluated_at=datetime.now(timezone.utc).isoformat()
             )
 
         violations = []
@@ -351,7 +351,7 @@ class PolicyEngine:
             status=status,
             violations=violations,
             summary=summary,
-            evaluated_at=datetime.utcnow().isoformat()
+            evaluated_at=datetime.now(timezone.utc).isoformat()
         )
 
     def evaluate_iac_findings(

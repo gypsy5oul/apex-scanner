@@ -6,9 +6,8 @@ Vulnerability Enrichment Module
 """
 import json
 import httpx
-import hashlib
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Tuple
 from app.config import settings, get_redis_client
 from app.logging_config import get_logger
@@ -265,54 +264,67 @@ class DigestCache:
 
     def get_image_digest(self, image_name: str) -> Optional[str]:
         """
-        Get the digest of a Docker image.
-        Uses 'docker inspect' or 'skopeo inspect' for remote images.
+        Get the current digest of a Docker image from the remote registry.
+
+        Uses skopeo to query the registry directly, ensuring we always get the
+        real current digest — critical for mutable tags like ':latest'.
+
+        If the digest has changed since the last scan, any stale cached result
+        for the old digest is automatically invalidated.
+
+        Returns None if digest cannot be resolved (forces a fresh scan with no
+        cache reuse, which is the safe default).
         """
         try:
-            # First check if we have a cached digest mapping
-            cached_digest = self.redis.get(f"{self.DIGEST_MAP_PREFIX}{image_name}")
-            if cached_digest:
-                return cached_digest
+            # If image is already digest-pinned, return it directly.
+            if "@sha256:" in image_name:
+                return image_name.split("@sha256:")[-1]
 
-            # Try docker inspect first (works for pulled images)
-            result = subprocess.run(
-                ["docker", "inspect", "--format", "{{index .RepoDigests 0}}", image_name],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-
-            if result.returncode == 0 and result.stdout.strip():
-                digest_full = result.stdout.strip()
-                # Extract just the sha256 part
-                if "@sha256:" in digest_full:
-                    digest = digest_full.split("@sha256:")[-1]
-                    # Cache the mapping
-                    self.redis.setex(f"{self.DIGEST_MAP_PREFIX}{image_name}", 3600, digest)
-                    return digest
-
-            # Try skopeo for remote images
+            # Always resolve current digest from remote registry via skopeo.
+            # Never fall back to local docker inspect — it uses the local
+            # daemon cache which can be stale for mutable tags.
             result = subprocess.run(
                 ["skopeo", "inspect", "--format", "{{.Digest}}", f"docker://{image_name}"],
                 capture_output=True,
                 text=True,
                 timeout=60
             )
-
             if result.returncode == 0 and result.stdout.strip():
                 digest = result.stdout.strip().replace("sha256:", "")
-                self.redis.setex(f"{self.DIGEST_MAP_PREFIX}{image_name}", 3600, digest)
+
+                # Check if the digest has changed from what we previously saw.
+                # If so, invalidate the old cached scan to prevent stale results.
+                previous_digest = self.redis.get(f"{self.DIGEST_MAP_PREFIX}{image_name}")
+                if previous_digest and previous_digest != digest:
+                    logger.info(
+                        f"Digest changed for {image_name}: "
+                        f"{previous_digest[:12]}... -> {digest[:12]}... "
+                        f"Invalidating old cached scan."
+                    )
+                    self.invalidate_cache(previous_digest)
+
+                # Store the current digest mapping (short TTL for observability).
+                self.redis.setex(f"{self.DIGEST_MAP_PREFIX}{image_name}", 300, digest)
                 return digest
 
-            # Fallback: create a hash of image name + current date (less optimal)
-            # This ensures daily rescans at minimum
-            date_str = datetime.now().strftime("%Y-%m-%d")
-            fallback_digest = hashlib.sha256(f"{image_name}:{date_str}".encode()).hexdigest()
-            logger.warning(f"Could not get digest for {image_name}, using fallback hash")
-            return fallback_digest
+            # skopeo failed — log and return None to force a fresh scan.
+            # This is safer than falling back to a potentially stale local cache.
+            stderr = result.stderr.strip() if result.stderr else "unknown error"
+            logger.warning(
+                f"Could not resolve remote digest for {image_name} via skopeo "
+                f"(exit={result.returncode}): {stderr}. "
+                f"Forcing fresh scan (no cache reuse)."
+            )
+            return None
 
         except subprocess.TimeoutExpired:
-            logger.warning(f"Timeout getting digest for {image_name}")
+            logger.warning(f"Timeout resolving digest for {image_name}; forcing fresh scan")
+            return None
+        except FileNotFoundError:
+            logger.error(
+                "skopeo binary not found — digest-based caching is disabled. "
+                "Install skopeo for optimal cache behavior."
+            )
             return None
         except Exception as e:
             logger.error(f"Error getting digest for {image_name}: {e}")
@@ -347,7 +359,7 @@ class DigestCache:
             "scan_id": scan_id,
             "image_name": image_name,
             "digest": digest,
-            "cached_at": datetime.now().isoformat(),
+            "cached_at": datetime.now(timezone.utc).isoformat(),
             "summary": result_summary
         }
 

@@ -2,15 +2,18 @@
 Authentication module for admin access
 JWT + API key authentication with bcrypt password hashing and rate limiting
 """
+import base64
 import hashlib
+import os
 import secrets
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt
 import jwt
 from fastapi import HTTPException, Security, Depends, Header, Request, status
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
@@ -26,6 +29,13 @@ INSECURE_PASSWORDS = {"scanner@admin", "admin", "password", "changeme", ""}
 API_KEY_PREFIX = "apex_"
 API_KEY_REDIS_PREFIX = "api_key:"
 LOGIN_ATTEMPT_PREFIX = "login_attempts:"
+
+# Cookie configuration
+AUTH_COOKIE_NAME = "apex_token"
+AUTH_COOKIE_PATH = "/"
+# COOKIE_SECURE should be True in production (HTTPS). Configurable via env.
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+COOKIE_SAMESITE = "lax"
 
 # Security scheme
 security = HTTPBearer(auto_error=False)
@@ -208,13 +218,13 @@ def create_access_token(username: str, role: str = "admin") -> tuple[str, int]:
     Returns: (token, expires_in_seconds)
     """
     expires_delta = timedelta(hours=settings.JWT_EXPIRATION_HOURS)
-    expire = datetime.utcnow() + expires_delta
+    expire = datetime.now(timezone.utc) + expires_delta
 
     payload = {
         "sub": username,
         "role": role,
         "exp": expire,
-        "iat": datetime.utcnow(),
+        "iat": datetime.now(timezone.utc),
         "type": "access",
     }
 
@@ -257,7 +267,7 @@ def create_api_key(name: str, expires_days: Optional[int] = 365) -> APIKeyRespon
     key_hash = _hash_api_key(raw_key)
     key_id = key_hash[:12]
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     key_data = {
         "key_id": key_id,
         "name": name,
@@ -308,11 +318,11 @@ def validate_api_key(raw_key: str) -> Optional[TokenData]:
     # Check expiration
     expires_at = key_data.get("expires_at")
     if expires_at:
-        if datetime.fromisoformat(expires_at) < datetime.utcnow():
+        if datetime.fromisoformat(expires_at) < datetime.now(timezone.utc):
             return None
 
     # Update last used timestamp
-    r.hset(f"{API_KEY_REDIS_PREFIX}{key_hash}", "last_used", datetime.utcnow().isoformat())
+    r.hset(f"{API_KEY_REDIS_PREFIX}{key_hash}", "last_used", datetime.now(timezone.utc).isoformat())
 
     return TokenData(
         username=key_data.get("created_by", "api_key"),
@@ -363,34 +373,60 @@ def revoke_api_key(key_id: str) -> bool:
 # --- FastAPI Dependencies ---
 
 async def get_current_user(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
     x_api_key: Optional[str] = Header(None),
 ) -> TokenData:
     """
     Dependency to get current authenticated user.
-    Supports both JWT Bearer tokens and X-API-Key header.
+    Supports: httpOnly cookie, JWT Bearer token, X-API-Key header, HTTP Basic Auth.
     Raises 401 if not authenticated.
     """
-    # Try API key first
+    # Try API key first (CI/CD pipelines)
     if x_api_key and settings.API_KEY_ENABLED:
         token_data = validate_api_key(x_api_key)
         if token_data:
             return token_data
 
-    # Try JWT Bearer token
+    # Try JWT Bearer token (header-based API clients)
     if credentials:
         token_data = verify_token(credentials.credentials)
         if token_data:
             return token_data
 
+    # Try httpOnly cookie (browser sessions)
+    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
+    if cookie_token:
+        token_data = verify_token(cookie_token)
+        if token_data:
+            return token_data
+
+    # Try HTTP Basic Auth (supports curl -u user:pass)
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("basic "):
+        try:
+            decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+            username, password = decoded.split(":", 1)
+            role = authenticate_user(username, password)
+            if role:
+                return TokenData(
+                    username=username,
+                    role=role,
+                    exp=datetime.now(timezone.utc) + timedelta(hours=1),
+                    auth_method="basic",
+                )
+        except (ValueError, UnicodeDecodeError):
+            pass
+
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Authentication required. Provide a Bearer token or X-API-Key header.",
-        headers={"WWW-Authenticate": "Bearer"},
+        detail="Authentication required. Provide a Bearer token, X-API-Key header, or Basic Auth credentials.",
+        headers={"WWW-Authenticate": "Basic"},
     )
 
 
 async def get_current_admin(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
     x_api_key: Optional[str] = Header(None),
 ) -> TokenData:
@@ -398,7 +434,7 @@ async def get_current_admin(
     Dependency to get current admin user.
     Raises 401 if not authenticated, 403 if not admin role.
     """
-    token_data = await get_current_user(credentials, x_api_key)
+    token_data = await get_current_user(request, credentials, x_api_key)
 
     if token_data.role != "admin":
         raise HTTPException(
@@ -410,6 +446,7 @@ async def get_current_admin(
 
 
 async def get_optional_admin(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
     x_api_key: Optional[str] = Header(None),
 ) -> Optional[TokenData]:
@@ -424,6 +461,30 @@ async def get_optional_admin(
 
     if credentials:
         return verify_token(credentials.credentials)
+
+    # Try httpOnly cookie
+    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
+    if cookie_token:
+        token_data = verify_token(cookie_token)
+        if token_data:
+            return token_data
+
+    # Try HTTP Basic Auth
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("basic "):
+        try:
+            decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+            username, password = decoded.split(":", 1)
+            role = authenticate_user(username, password)
+            if role:
+                return TokenData(
+                    username=username,
+                    role=role,
+                    exp=datetime.now(timezone.utc) + timedelta(hours=1),
+                    auth_method="basic",
+                )
+        except (ValueError, UnicodeDecodeError):
+            pass
 
     return None
 
@@ -462,4 +523,30 @@ def login(username: str, password: str, request: Optional[Request] = None) -> Lo
         expires_in=expires_in,
         username=username,
         role=role,
+    )
+
+
+# --- Cookie Helpers ---
+
+def set_auth_cookie(response: JSONResponse, token: str, max_age: int) -> None:
+    """Set httpOnly authentication cookie on the response."""
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        max_age=max_age,
+        path=AUTH_COOKIE_PATH,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+    )
+
+
+def clear_auth_cookie(response: JSONResponse) -> None:
+    """Clear the authentication cookie."""
+    response.delete_cookie(
+        key=AUTH_COOKIE_NAME,
+        path=AUTH_COOKIE_PATH,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
     )

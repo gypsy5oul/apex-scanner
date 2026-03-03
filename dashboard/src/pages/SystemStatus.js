@@ -79,28 +79,54 @@ function SystemStatus() {
 
   const handleUpdateDb = async () => {
     setUpdating(true);
+    setError(null);
+    setSuccess(null);
     try {
       await triggerDbUpdate();
       setSuccess('Vulnerability database update started. This may take a few minutes.');
-      // Refresh after a short delay
-      setTimeout(fetchData, 5000);
+      setTimeout(async () => {
+        await reloadData();
+        setUpdating(false);
+      }, 5000);
     } catch (err) {
       setError('Failed to trigger database update');
-    } finally {
       setUpdating(false);
+    }
+  };
+
+  const reloadData = async () => {
+    try {
+      const [toolsRes, dbRes, historyRes, notifRes] = await Promise.all([
+        getToolVersions(),
+        getDbStatus(),
+        getUpdateHistory(10),
+        getSystemNotifications(10),
+      ]);
+      setToolVersions(toolsRes.data);
+      setDbStatus(dbRes.data);
+      setUpdateHistory(historyRes.data.history || []);
+      setNotifications(notifRes.data.notifications || []);
+    } catch (err) {
+      // silent reload, don't overwrite existing data
     }
   };
 
   const handleRefreshStatus = async () => {
     setRefreshing(true);
+    setError(null);
+    setSuccess(null);
     try {
       await refreshSystemStatus();
-      setSuccess('Status refresh triggered. Please wait a moment...');
-      // Refresh data after a short delay to allow worker to update cache
-      setTimeout(fetchData, 3000);
+      setSuccess('Status refresh triggered. Reloading in a few seconds...');
+      // Wait for worker to update cache, then reload without full page spinner
+      setTimeout(async () => {
+        await reloadData();
+        setRefreshing(false);
+        setSuccess('Status refreshed successfully.');
+        setTimeout(() => setSuccess(null), 3000);
+      }, 5000);
     } catch (err) {
       setError('Failed to refresh system status');
-    } finally {
       setRefreshing(false);
     }
   };

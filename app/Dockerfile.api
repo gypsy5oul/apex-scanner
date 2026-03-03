@@ -1,21 +1,54 @@
-# Base Image
-FROM python:3.9-slim
+# ============================================================
+# Stage 1: Builder — install Python dependencies into a venv
+# ============================================================
+FROM registry.access.redhat.com/ubi9/python-312 AS builder
 
-# Set working directory
+WORKDIR /opt/app-root/src
+
+# Copy only requirements first for layer caching
+COPY requirements.txt .
+
+# Install dependencies into an isolated venv
+RUN python3.12 -m venv /opt/app-root/venv && \
+    /opt/app-root/venv/bin/pip install --no-cache-dir --upgrade pip && \
+    /opt/app-root/venv/bin/pip install --no-cache-dir -r requirements.txt
+
+# ============================================================
+# Stage 2: Runtime — minimal UBI image with only what's needed
+# ============================================================
+FROM registry.access.redhat.com/ubi9/ubi-minimal AS runtime
+
+# Install minimal runtime deps
+RUN microdnf install -y python3.12 shadow-utils && \
+    microdnf clean all && \
+    rm -rf /var/cache/yum
+
+# Create non-root user
+RUN groupadd -r scanner -g 1000 && \
+    useradd -r -g scanner -u 1000 -d /home/scanner -m scanner
+
 WORKDIR /app
+
+# Copy venv from builder
+COPY --from=builder /opt/app-root/venv /opt/app-root/venv
 
 # Copy application code
 COPY . /app
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Create directories and set ownership
+RUN mkdir -p /var/www/html/reports /var/www/html/sboms && \
+    chown -R scanner:scanner /var/www/html/reports /var/www/html/sboms && \
+    chown -R scanner:scanner /app
 
-# Ensure reports and SBOMs directories exist
-RUN mkdir -p /var/www/html/reports /var/www/html/sboms && chmod -R 755 /var/www/html/reports /var/www/html/sboms
+# Put venv on PATH
+ENV PATH="/opt/app-root/venv/bin:$PATH"
+ENV VIRTUAL_ENV="/opt/app-root/venv"
+
+# Switch to non-root user
+USER scanner
 
 # Expose port for FastAPI
 EXPOSE 8000
 
 # Start FastAPI with Uvicorn
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-

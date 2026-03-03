@@ -1,16 +1,11 @@
-# Base Image
-FROM python:3.9
+# ============================================================
+# Stage 1: Downloader — fetch and verify scanner binaries
+# ============================================================
+FROM registry.access.redhat.com/ubi9/ubi-minimal AS downloader
 
-# Set working directory
-WORKDIR /app
+RUN microdnf install -y tar gzip && \
+    microdnf clean all
 
-# Copy application code
-COPY . /app
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Install scanner binaries with retry logic — ALL MUST SUCCEED
 RUN set -e; \
     # Function to download with retries
     download_with_retry() { \
@@ -32,58 +27,139 @@ RUN set -e; \
         return 1; \
     }; \
     \
-    # Install Grype
-    echo "Installing Grype v0.104.2..."; \
+    mkdir -p /out/bin && \
+    \
+    # Install Grype with checksum verification
+    echo "Installing Grype v0.108.0..." && \
     download_with_retry \
-        "https://github.com/anchore/grype/releases/download/v0.104.2/grype_0.104.2_linux_amd64.tar.gz" \
+        "https://github.com/anchore/grype/releases/download/v0.108.0/grype_0.108.0_linux_amd64.tar.gz" \
         "/tmp/grype.tar.gz" && \
-    tar -xzf /tmp/grype.tar.gz -C /usr/local/bin grype && \
-    chmod +x /usr/local/bin/grype && \
-    rm /tmp/grype.tar.gz && \
-    echo "Grype installed successfully" && \
-    \
-    # Install Trivy
-    echo "Installing Trivy v0.68.1..."; \
     download_with_retry \
-        "https://github.com/aquasecurity/trivy/releases/download/v0.68.1/trivy_0.68.1_Linux-64bit.tar.gz" \
+        "https://github.com/anchore/grype/releases/download/v0.108.0/grype_0.108.0_checksums.txt" \
+        "/tmp/grype_checksums.txt" && \
+    echo "Verifying Grype checksum..." && \
+    expected_hash=$(grep "grype_0.108.0_linux_amd64.tar.gz" /tmp/grype_checksums.txt | awk '{print $1}') && \
+    echo "$expected_hash  /tmp/grype.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/grype.tar.gz -C /out/bin grype && \
+    chmod +x /out/bin/grype && \
+    rm /tmp/grype.tar.gz /tmp/grype_checksums.txt && \
+    echo "Grype installed and verified successfully" && \
+    \
+    # Install Trivy with checksum verification
+    echo "Installing Trivy v0.69.2..." && \
+    download_with_retry \
+        "https://github.com/aquasecurity/trivy/releases/download/v0.69.2/trivy_0.69.2_Linux-64bit.tar.gz" \
         "/tmp/trivy.tar.gz" && \
-    tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy && \
-    chmod +x /usr/local/bin/trivy && \
-    rm /tmp/trivy.tar.gz && \
-    echo "Trivy installed successfully" && \
-    \
-    # Install Syft — MANDATORY, build fails if missing
-    echo "Installing Syft v1.38.2..."; \
     download_with_retry \
-        "https://github.com/anchore/syft/releases/download/v1.38.2/syft_1.38.2_linux_amd64.tar.gz" \
+        "https://github.com/aquasecurity/trivy/releases/download/v0.69.2/trivy_0.69.2_checksums.txt" \
+        "/tmp/trivy_checksums.txt" && \
+    echo "Verifying Trivy checksum..." && \
+    expected_hash=$(grep "trivy_0.69.2_Linux-64bit.tar.gz" /tmp/trivy_checksums.txt | awk '{print $1}') && \
+    echo "$expected_hash  /tmp/trivy.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/trivy.tar.gz -C /out/bin trivy && \
+    chmod +x /out/bin/trivy && \
+    rm /tmp/trivy.tar.gz /tmp/trivy_checksums.txt && \
+    echo "Trivy installed and verified successfully" && \
+    \
+    # Install Syft with checksum verification
+    echo "Installing Syft v1.42.0..." && \
+    download_with_retry \
+        "https://github.com/anchore/syft/releases/download/v1.42.0/syft_1.42.0_linux_amd64.tar.gz" \
         "/tmp/syft.tar.gz" && \
-    tar -xzf /tmp/syft.tar.gz -C /usr/local/bin syft && \
-    chmod +x /usr/local/bin/syft && \
-    rm /tmp/syft.tar.gz && \
-    echo "Syft installed successfully"
+    download_with_retry \
+        "https://github.com/anchore/syft/releases/download/v1.42.0/syft_1.42.0_checksums.txt" \
+        "/tmp/syft_checksums.txt" && \
+    echo "Verifying Syft checksum..." && \
+    expected_hash=$(grep "syft_1.42.0_linux_amd64.tar.gz" /tmp/syft_checksums.txt | awk '{print $1}') && \
+    echo "$expected_hash  /tmp/syft.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/syft.tar.gz -C /out/bin syft && \
+    chmod +x /out/bin/syft && \
+    rm /tmp/syft.tar.gz /tmp/syft_checksums.txt && \
+    echo "Syft installed and verified successfully"
 
-# Ensure reports and sbom directories exist
-RUN mkdir -p /var/www/html/reports /var/www/html/sboms && chmod -R 755 /var/www/html/reports /var/www/html/sboms
+# ============================================================
+# Stage 2: Pip Builder — install Python dependencies into venv
+# ============================================================
+FROM registry.access.redhat.com/ubi9/python-312 AS pip-builder
+
+WORKDIR /opt/app-root/src
+
+COPY requirements.txt .
+
+RUN python3.12 -m venv /opt/app-root/venv && \
+    /opt/app-root/venv/bin/pip install --no-cache-dir --upgrade pip && \
+    /opt/app-root/venv/bin/pip install --no-cache-dir -r requirements.txt
+
+# ============================================================
+# Stage 3: Runtime — minimal UBI with scanner binaries + venv
+# ============================================================
+FROM registry.access.redhat.com/ubi9/ubi-minimal AS runtime
+
+# Install minimal runtime deps (skopeo for digest resolution)
+RUN microdnf install -y python3.12 skopeo shadow-utils ca-certificates && \
+    microdnf clean all && \
+    rm -rf /var/cache/yum
+
+# Create non-root user
+RUN groupadd -r scanner -g 1000 && \
+    useradd -r -g scanner -u 1000 -d /home/scanner -m scanner
+
+WORKDIR /app
+
+# Copy venv from pip-builder
+COPY --from=pip-builder /opt/app-root/venv /opt/app-root/venv
+
+# Copy scanner binaries from downloader
+COPY --from=downloader /out/bin/grype /usr/local/bin/grype
+COPY --from=downloader /out/bin/trivy /usr/local/bin/trivy
+COPY --from=downloader /out/bin/syft /usr/local/bin/syft
+
+# Copy application code
+COPY . /app
+
+# Create directories and set ownership
+RUN mkdir -p /var/www/html/reports /var/www/html/sboms \
+             /home/scanner/.cache/trivy/db \
+             /home/scanner/.cache/grype/db && \
+    chown -R scanner:scanner /var/www/html/reports /var/www/html/sboms && \
+    chown -R scanner:scanner /home/scanner && \
+    chown -R scanner:scanner /app
+
+# Put venv on PATH
+ENV PATH="/opt/app-root/venv/bin:/usr/local/bin:$PATH"
+ENV VIRTUAL_ENV="/opt/app-root/venv"
 
 # Verify all scanner binaries execute correctly
 RUN echo "=== Verifying scanner binaries ===" && \
     grype version && \
     trivy --version && \
     syft version && \
+    skopeo --version && \
     echo "=== All scanner binaries verified ==="
 
-# Pre-download scanner DBs at build time to avoid download failures at runtime
-RUN trivy image --download-db-only --db-repository ghcr.io/aquasecurity/trivy-db:2
-RUN trivy image --download-java-db-only --java-db-repository ghcr.io/aquasecurity/trivy-java-db:1
-RUN grype db update
+# Set environment variables for non-root cache locations
+ENV GRYPE_DB_CACHE_DIR=/home/scanner/.cache/grype/db
+ENV TRIVY_CACHE_DIR=/home/scanner/.cache/trivy
+ENV XDG_CACHE_HOME=/home/scanner/.cache
 
-# Verify DBs were actually downloaded — fail build if not
+# Pre-download scanner DBs at build time to avoid download failures at runtime
+RUN TRIVY_CACHE_DIR=/home/scanner/.cache/trivy \
+    trivy image --download-db-only --db-repository ghcr.io/aquasecurity/trivy-db:2 && \
+    TRIVY_CACHE_DIR=/home/scanner/.cache/trivy \
+    trivy image --download-java-db-only --java-db-repository ghcr.io/aquasecurity/trivy-java-db:1 && \
+    XDG_CACHE_HOME=/home/scanner/.cache grype db update && \
+    chown -R scanner:scanner /home/scanner/.cache
+
+# Verify DBs were actually downloaded
 RUN echo "=== Verifying scanner databases ===" && \
-    test -d /root/.cache/trivy/db || (echo "FATAL: Trivy vulnerability DB not found" && exit 1) && \
+    test -d /home/scanner/.cache/trivy/db || (echo "FATAL: Trivy vulnerability DB not found" && exit 1) && \
     echo "Trivy DB: OK" && \
-    grype db check || (echo "FATAL: Grype DB validation failed" && exit 1) && \
+    XDG_CACHE_HOME=/home/scanner/.cache grype db check || (echo "FATAL: Grype DB validation failed" && exit 1) && \
     echo "Grype DB: OK" && \
     echo "=== All scanner databases verified ==="
+
+# Switch to non-root user
+USER scanner
 
 # Expose relevant ports (not required for worker, but useful for debugging)
 EXPOSE 8000

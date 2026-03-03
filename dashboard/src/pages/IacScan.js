@@ -53,15 +53,7 @@ const getApiUrl = () => {
 const apiV2 = axios.create({
   baseURL: `${getApiUrl()}/api/v2`,
   headers: { 'Content-Type': 'application/json' },
-});
-
-// Add auth token if available
-apiV2.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
+  withCredentials: true,
 });
 
 const severityColors = {

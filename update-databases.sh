@@ -2,11 +2,9 @@
 
 #############################################################
 # Vulnerability Database Update Script
-# Purpose: Update scanner databases without rebuilding containers
-# Schedule: Run daily via cron (zero downtime)
+# Purpose: Update scanner databases on ALL worker containers
+# Schedule: Run daily via cron at 2 AM (zero downtime)
 #############################################################
-
-set -e
 
 LOG_FILE="/var/log/scanner-db-updates.log"
 
@@ -16,20 +14,50 @@ log() {
 
 log "=== Database Update Started ==="
 
-# Update Grype database
-log "Updating Grype vulnerability database..."
-docker exec app-worker-1 grype db update 2>&1 | tee -a "$LOG_FILE"
+# Find all running worker containers
+WORKERS=$(docker ps --format '{{.Names}}' | grep -E 'worker' | grep -v autoscaler)
 
-# Update Trivy database
-log "Updating Trivy vulnerability database..."
-docker exec app-worker-1 trivy image --download-db-only 2>&1 | tee -a "$LOG_FILE"
+if [ -z "$WORKERS" ]; then
+    log "ERROR: No worker containers found!"
+    exit 1
+fi
 
-# Check database info
-log "Checking database freshness..."
-GRYPE_DB_DATE=$(docker exec app-worker-1 stat -c %y /root/.cache/grype/db/6/vulnerability.db 2>/dev/null | cut -d' ' -f1 || echo "unknown")
-TRIVY_DB_DATE=$(docker exec app-worker-1 stat -c %y /root/.cache/trivy/db/trivy.db 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+FAILED=0
 
-log "Grype DB updated: $GRYPE_DB_DATE"
-log "Trivy DB updated: $TRIVY_DB_DATE"
+for worker in $WORKERS; do
+    log "Updating Grype DB on $worker..."
+    if docker exec "$worker" grype db update 2>&1 | tee -a "$LOG_FILE"; then
+        log "  $worker grype: OK"
+    else
+        log "  $worker grype: FAILED"
+        FAILED=$((FAILED + 1))
+    fi
 
-log "=== Database Update Completed Successfully ==="
+    log "Updating Trivy DB on $worker..."
+    if docker exec "$worker" trivy image --download-db-only 2>&1 | tee -a "$LOG_FILE"; then
+        log "  $worker trivy: OK"
+    else
+        log "  $worker trivy: FAILED"
+        FAILED=$((FAILED + 1))
+    fi
+
+    log "Updating Trivy Java DB on $worker..."
+    if docker exec "$worker" trivy image --download-java-db-only 2>&1 | tee -a "$LOG_FILE"; then
+        log "  $worker trivy-java: OK"
+    else
+        log "  $worker trivy-java: FAILED"
+        FAILED=$((FAILED + 1))
+    fi
+done
+
+# Verify freshness on first worker
+FIRST_WORKER=$(echo "$WORKERS" | head -1)
+log "Checking DB status on $FIRST_WORKER..."
+docker exec "$FIRST_WORKER" grype db status 2>&1 | tee -a "$LOG_FILE"
+
+if [ $FAILED -gt 0 ]; then
+    log "=== Database Update Completed with $FAILED failures ==="
+    exit 1
+else
+    log "=== Database Update Completed Successfully ==="
+fi
