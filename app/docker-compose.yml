@@ -80,7 +80,7 @@ services:
     volumes:
       - /opt/scanner-reports:/var/www/html/reports
       - /opt/scanner-sboms:/var/www/html/sboms
-      - ${DOCKER_CONFIG_PATH:-/dev/null}:/home/scanner/.docker/config.json:ro
+      - ${DOCKER_CONFIG_PATH:-./scripts/empty-docker-config.json}:/home/scanner/.docker/config.json:ro
     restart: unless-stopped
     deploy:
       resources:
@@ -112,7 +112,7 @@ services:
     volumes:
       - /opt/scanner-reports:/var/www/html/reports
       - /opt/scanner-sboms:/var/www/html/sboms
-      - ${DOCKER_CONFIG_PATH:-/dev/null}:/home/scanner/.docker/config.json:ro
+      - ${DOCKER_CONFIG_PATH:-./scripts/empty-docker-config.json}:/home/scanner/.docker/config.json:ro
     restart: unless-stopped
     deploy:
       mode: replicated
