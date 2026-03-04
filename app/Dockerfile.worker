@@ -30,15 +30,15 @@ RUN set -e; \
     mkdir -p /out/bin && \
     \
     # Install Grype with checksum verification
-    echo "Installing Grype v0.108.0..." && \
+    echo "Installing Grype v0.109.0..." && \
     download_with_retry \
-        "https://github.com/anchore/grype/releases/download/v0.108.0/grype_0.108.0_linux_amd64.tar.gz" \
+        "https://github.com/anchore/grype/releases/download/v0.109.0/grype_0.109.0_linux_amd64.tar.gz" \
         "/tmp/grype.tar.gz" && \
     download_with_retry \
-        "https://github.com/anchore/grype/releases/download/v0.108.0/grype_0.108.0_checksums.txt" \
+        "https://github.com/anchore/grype/releases/download/v0.109.0/grype_0.109.0_checksums.txt" \
         "/tmp/grype_checksums.txt" && \
     echo "Verifying Grype checksum..." && \
-    expected_hash=$(grep "grype_0.108.0_linux_amd64.tar.gz" /tmp/grype_checksums.txt | awk '{print $1}') && \
+    expected_hash=$(grep "grype_0.109.0_linux_amd64.tar.gz" /tmp/grype_checksums.txt | awk '{print $1}') && \
     echo "$expected_hash  /tmp/grype.tar.gz" | sha256sum -c - && \
     tar -xzf /tmp/grype.tar.gz -C /out/bin grype && \
     chmod +x /out/bin/grype && \
@@ -46,15 +46,15 @@ RUN set -e; \
     echo "Grype installed and verified successfully" && \
     \
     # Install Trivy with checksum verification
-    echo "Installing Trivy v0.69.2..." && \
+    echo "Installing Trivy v0.69.3..." && \
     download_with_retry \
-        "https://github.com/aquasecurity/trivy/releases/download/v0.69.2/trivy_0.69.2_Linux-64bit.tar.gz" \
+        "https://github.com/aquasecurity/trivy/releases/download/v0.69.3/trivy_0.69.3_Linux-64bit.tar.gz" \
         "/tmp/trivy.tar.gz" && \
     download_with_retry \
-        "https://github.com/aquasecurity/trivy/releases/download/v0.69.2/trivy_0.69.2_checksums.txt" \
+        "https://github.com/aquasecurity/trivy/releases/download/v0.69.3/trivy_0.69.3_checksums.txt" \
         "/tmp/trivy_checksums.txt" && \
     echo "Verifying Trivy checksum..." && \
-    expected_hash=$(grep "trivy_0.69.2_Linux-64bit.tar.gz" /tmp/trivy_checksums.txt | awk '{print $1}') && \
+    expected_hash=$(grep "trivy_0.69.3_Linux-64bit.tar.gz" /tmp/trivy_checksums.txt | awk '{print $1}') && \
     echo "$expected_hash  /tmp/trivy.tar.gz" | sha256sum -c - && \
     tar -xzf /tmp/trivy.tar.gz -C /out/bin trivy && \
     chmod +x /out/bin/trivy && \
@@ -62,15 +62,15 @@ RUN set -e; \
     echo "Trivy installed and verified successfully" && \
     \
     # Install Syft with checksum verification
-    echo "Installing Syft v1.42.0..." && \
+    echo "Installing Syft v1.42.1..." && \
     download_with_retry \
-        "https://github.com/anchore/syft/releases/download/v1.42.0/syft_1.42.0_linux_amd64.tar.gz" \
+        "https://github.com/anchore/syft/releases/download/v1.42.1/syft_1.42.1_linux_amd64.tar.gz" \
         "/tmp/syft.tar.gz" && \
     download_with_retry \
-        "https://github.com/anchore/syft/releases/download/v1.42.0/syft_1.42.0_checksums.txt" \
+        "https://github.com/anchore/syft/releases/download/v1.42.1/syft_1.42.1_checksums.txt" \
         "/tmp/syft_checksums.txt" && \
     echo "Verifying Syft checksum..." && \
-    expected_hash=$(grep "syft_1.42.0_linux_amd64.tar.gz" /tmp/syft_checksums.txt | awk '{print $1}') && \
+    expected_hash=$(grep "syft_1.42.1_linux_amd64.tar.gz" /tmp/syft_checksums.txt | awk '{print $1}') && \
     echo "$expected_hash  /tmp/syft.tar.gz" | sha256sum -c - && \
     tar -xzf /tmp/syft.tar.gz -C /out/bin syft && \
     chmod +x /out/bin/syft && \
@@ -116,6 +116,7 @@ COPY --from=downloader /out/bin/syft /usr/local/bin/syft
 
 # Copy application code
 COPY . /app
+COPY scripts/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
 
 # Create directories and set ownership
 RUN mkdir -p /var/www/html/reports /var/www/html/sboms \
@@ -123,7 +124,8 @@ RUN mkdir -p /var/www/html/reports /var/www/html/sboms \
              /home/scanner/.cache/grype/db && \
     chown -R scanner:scanner /var/www/html/reports /var/www/html/sboms && \
     chown -R scanner:scanner /home/scanner && \
-    chown -R scanner:scanner /app
+    chown -R scanner:scanner /app && \
+    chmod +x /usr/local/bin/worker-entrypoint.sh
 
 # Put venv on PATH
 ENV PATH="/opt/app-root/venv/bin:/usr/local/bin:$PATH"
@@ -158,11 +160,11 @@ RUN echo "=== Verifying scanner databases ===" && \
     echo "Grype DB: OK" && \
     echo "=== All scanner databases verified ==="
 
-# Switch to non-root user
-USER scanner
-
 # Expose relevant ports (not required for worker, but useful for debugging)
 EXPOSE 8000
+
+# Ensure mounted directories are writable, then run as non-root scanner user.
+ENTRYPOINT ["/usr/local/bin/worker-entrypoint.sh"]
 
 # Start Celery Worker
 CMD ["celery", "-A", "app.tasks.celery", "worker", "--loglevel=info"]

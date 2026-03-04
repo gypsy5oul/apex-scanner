@@ -8,13 +8,8 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
 
-from app.config import settings
+from app.config import settings, get_redis_client
 from app.tasks import celery
-
-
-def get_redis_client() -> redis.Redis:
-    """Get Redis client"""
-    return redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
 @dataclass
@@ -61,7 +56,27 @@ class WorkerMonitor:
 
     def __init__(self):
         self.redis = get_redis_client()
-        self.inspect = celery.control.inspect()
+        self.inspect = celery.control.inspect(timeout=0.5)
+        # Cache for inspect results within a single request cycle
+        self._inspect_cache = {}
+
+    def _get_inspect_data(self) -> Dict[str, Any]:
+        """Fetch all inspect data in one batch, cached per monitor instance."""
+        if self._inspect_cache:
+            return self._inspect_cache
+        try:
+            self._inspect_cache = {
+                'stats': self.inspect.stats() or {},
+                'active': self.inspect.active() or {},
+                'active_queues': self.inspect.active_queues() or {},
+            }
+        except Exception:
+            self._inspect_cache = {'stats': {}, 'active': {}, 'active_queues': {}}
+        return self._inspect_cache
+
+    def clear_cache(self):
+        """Clear inspect cache for next request."""
+        self._inspect_cache = {}
 
     def get_queue_lengths(self) -> Dict[str, int]:
         """Get length of all queues"""
@@ -77,17 +92,13 @@ class WorkerMonitor:
         """Get detailed queue information"""
         queues = []
         lengths = self.get_queue_lengths()
+        data = self._get_inspect_data()
 
-        # Try to get consumer counts from Celery inspect
-        try:
-            active_queues = self.inspect.active_queues() or {}
-            queue_consumers = {}
-            for worker, worker_queues in active_queues.items():
-                for q in worker_queues:
-                    queue_name = q.get('name', '')
-                    queue_consumers[queue_name] = queue_consumers.get(queue_name, 0) + 1
-        except Exception:
-            queue_consumers = {}
+        queue_consumers = {}
+        for worker, worker_queues in data['active_queues'].items():
+            for q in worker_queues:
+                queue_name = q.get('name', '')
+                queue_consumers[queue_name] = queue_consumers.get(queue_name, 0) + 1
 
         for queue in self.QUEUE_NAMES:
             queues.append(QueueInfo(
@@ -101,12 +112,12 @@ class WorkerMonitor:
     def get_worker_stats(self) -> List[WorkerStats]:
         """Get statistics for all workers"""
         workers = []
+        data = self._get_inspect_data()
 
         try:
-            # Get worker stats from Celery inspect
-            stats = self.inspect.stats() or {}
-            active = self.inspect.active() or {}
-            reserved = self.inspect.reserved() or {}
+            stats = data['stats']
+            active = data['active']
+            active_queues = data['active_queues']
 
             for hostname, worker_stats in stats.items():
                 worker_active = len(active.get(hostname, []))
@@ -114,7 +125,6 @@ class WorkerMonitor:
                 # Get queue names this worker is listening to
                 queues = []
                 try:
-                    active_queues = self.inspect.active_queues() or {}
                     if hostname in active_queues:
                         queues = [q.get('name', '') for q in active_queues[hostname]]
                 except Exception:
@@ -236,10 +246,10 @@ class WorkerMonitor:
 
         return stats
 
-    def ping_workers(self) -> Dict[str, bool]:
+    def ping_workers(self, timeout: float = 1.0) -> Dict[str, bool]:
         """Ping all workers to check responsiveness"""
         try:
-            pong = celery.control.ping(timeout=5)
+            pong = celery.control.ping(timeout=timeout)
             results = {}
             for response in pong:
                 for hostname, status in response.items():

@@ -1286,6 +1286,7 @@ async def get_workers_status(admin: TokenData = Depends(get_current_admin)):
     from app.worker_monitor import get_monitor
 
     monitor = get_monitor()
+    monitor.clear_cache()
     return monitor.get_comprehensive_status()
 
 
@@ -1300,6 +1301,7 @@ async def get_queue_stats(admin: TokenData = Depends(get_current_admin)):
     from dataclasses import asdict
 
     monitor = get_monitor()
+    monitor.clear_cache()
     queues = monitor.get_queue_info()
     queue_lengths = monitor.get_queue_lengths()
 
@@ -1321,6 +1323,7 @@ async def list_workers(admin: TokenData = Depends(get_current_admin)):
     from dataclasses import asdict
 
     monitor = get_monitor()
+    monitor.clear_cache()
     workers = monitor.get_worker_stats()
     pings = monitor.ping_workers()
 
@@ -1456,11 +1459,10 @@ async def workers_health(admin: TokenData = Depends(get_current_admin)):
 
     try:
         redis_ok = monitor._check_redis_health()
-        workers = monitor.get_worker_stats()
-        pings = monitor.ping_workers()
+        pings = monitor.ping_workers(timeout=1.0)
 
-        worker_count = len(workers)
         responsive_count = sum(1 for v in pings.values() if v)
+        worker_count = len(pings)
 
         status = "healthy"
         if not redis_ok:
