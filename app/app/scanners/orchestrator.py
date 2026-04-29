@@ -31,18 +31,27 @@ class ScannerOrchestrator:
         self.trivy = TrivyScanner() if settings.ENABLE_TRIVY else None
         self.syft = SyftScanner() if settings.ENABLE_SYFT else None
 
-        # Run preflights — log warnings but don't block (DB update task may fix later)
+        # Run preflights in parallel to shave ~2s off every scan
         self._preflight_status: Dict[str, Dict[str, Any]] = {}
-        for name, scanner in self._enabled_scanners():
-            ok, err = scanner.preflight()
-            self._preflight_status[name] = {"ok": ok, "error": err}
-            if not ok:
-                self.logger.warning(
-                    f"Preflight FAILED for {name}: {err}  "
-                    "(scanner will still be attempted — may recover)"
-                )
-            else:
-                self.logger.info(f"Preflight OK for {name}")
+        scanners = list(self._enabled_scanners())
+        with ThreadPoolExecutor(max_workers=len(scanners) or 1) as executor:
+            preflight_futures = {
+                name: executor.submit(scanner.preflight)
+                for name, scanner in scanners
+            }
+            for name, fut in preflight_futures.items():
+                try:
+                    ok, err = fut.result(timeout=130)
+                except Exception as exc:
+                    ok, err = False, str(exc)
+                self._preflight_status[name] = {"ok": ok, "error": err}
+                if not ok:
+                    self.logger.warning(
+                        f"Preflight FAILED for {name}: {err}  "
+                        "(scanner will still be attempted — may recover)"
+                    )
+                else:
+                    self.logger.info(f"Preflight OK for {name}")
 
     # ------------------------------------------------------------------
     # Helpers

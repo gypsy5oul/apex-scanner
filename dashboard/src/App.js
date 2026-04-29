@@ -21,6 +21,9 @@ import SystemStatus from './pages/SystemStatus';
 import WorkerMonitor from './pages/WorkerMonitor';
 import IacScan from './pages/IacScan';
 import Policies from './pages/Policies';
+import Compliance from './pages/Compliance';
+import DependencyGraph from './pages/DependencyGraph';
+import VexManagement from './pages/VexManagement';
 
 const drawerWidth = 280;
 
@@ -101,6 +104,15 @@ function AppRoutes() {
         } />
         <Route path="/base-images/:imageName/:tag" element={
           <ProtectedRoute requiredRole="admin"><BaseImageDetail /></ProtectedRoute>
+        } />
+        <Route path="/compliance" element={
+          <ProtectedRoute requiredRole="admin"><Compliance /></ProtectedRoute>
+        } />
+        <Route path="/dependency-graph" element={
+          <ProtectedRoute requiredRole="admin"><DependencyGraph /></ProtectedRoute>
+        } />
+        <Route path="/vex" element={
+          <ProtectedRoute requiredRole="admin"><VexManagement /></ProtectedRoute>
         } />
         <Route path="/workers" element={
           <ProtectedRoute requiredRole="admin"><WorkerMonitor /></ProtectedRoute>

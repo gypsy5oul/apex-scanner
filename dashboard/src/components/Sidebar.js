@@ -31,6 +31,9 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SecurityIcon from '@mui/icons-material/Security';
 import PolicyIcon from '@mui/icons-material/Policy';
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import GavelIcon from '@mui/icons-material/Gavel';
 import { useAuth } from '../context/AuthContext';
 
 const mainMenuItems = [
@@ -46,6 +49,9 @@ const analysisMenuItems = [
   { text: 'Search CVEs', icon: <BugReportIcon />, path: '/search' },
   { text: 'Trends', icon: <TrendingUpIcon />, path: '/trends' },
   { text: 'Policies', icon: <PolicyIcon />, path: '/policies' },
+  { text: 'Compliance', icon: <GavelIcon />, path: '/compliance' },
+  { text: 'Dependencies', icon: <AccountTreeIcon />, path: '/dependency-graph' },
+  { text: 'VEX', icon: <VerifiedUserIcon />, path: '/vex' },
 ];
 
 const enterpriseMenuItems = [

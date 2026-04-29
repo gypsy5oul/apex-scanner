@@ -249,10 +249,14 @@ def generate_sbom_html_report(
         template = env.get_template("sbom_report_template.html")
         report_file = os.path.join(settings.REPORTS_DIR, f"{scan_id}_sbom.html")
 
-        # Extract packages from SBOM
+        # Extract packages from SBOM, deduplicating by name:version:type.
+        # Syft reports the same JAR once per location in the image (e.g. a
+        # library bundled inside multiple WARs).  We merge those into a
+        # single entry so the HTML report shows unique packages only.
         artifacts = sbom_data.get("artifacts", [])
         packages = []
         package_types = {}
+        _seen_pkgs = {}  # key: "name:version:type" -> index in packages
 
         for artifact in artifacts:
             licenses = []
@@ -263,11 +267,24 @@ def generate_sbom_html_report(
                     licenses.append(lic.get("value", "Unknown"))
 
             pkg_type = artifact.get("type", "Unknown")
+            pkg_name = artifact.get("name", "Unknown")
+            pkg_version = artifact.get("version", "Unknown")
+            dedup_key = f"{pkg_name}:{pkg_version}:{pkg_type}"
+
+            if dedup_key in _seen_pkgs:
+                # Merge licenses from duplicate location
+                idx = _seen_pkgs[dedup_key]
+                for lic in licenses:
+                    if lic not in packages[idx]["licenses"]:
+                        packages[idx]["licenses"].append(lic)
+                continue
+
             package_types[pkg_type] = package_types.get(pkg_type, 0) + 1
+            _seen_pkgs[dedup_key] = len(packages)
 
             packages.append({
-                "name": artifact.get("name", "Unknown"),
-                "version": artifact.get("version", "Unknown"),
+                "name": pkg_name,
+                "version": pkg_version,
                 "type": pkg_type,
                 "language": artifact.get("language", ""),
                 "licenses": licenses
@@ -719,7 +736,9 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) ->
             redis_client.hset(scan_id, mapping=redis_result)
 
             # Cache by digest for future identical image scans
-            if image_digest:
+            # Only cache full-quality scans — degraded results (scanner failures)
+            # should not pollute the cache and block future fresh scans.
+            if image_digest and scan_quality == "full":
                 cache_scan_by_digest(
                     digest=image_digest,
                     scan_id=scan_id,

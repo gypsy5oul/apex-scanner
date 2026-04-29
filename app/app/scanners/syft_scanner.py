@@ -45,36 +45,53 @@ class SyftScanner(BaseScanner):
             self.logger.info(f"Generating SBOM for: {image_name}")
 
             results = {}
+
+            # Build a single syft command with multiple -o flags so the image
+            # is pulled and analysed only once (instead of once per format).
+            output_paths = {}
+            command = ["syft", image_name]
             for fmt in output_formats:
-                output_path = f"{output_dir}/{scan_id}_{fmt.replace('-', '_')}.json"
+                path = f"{output_dir}/{scan_id}_{fmt.replace('-', '_')}.json"
+                command.extend(["-o", f"{fmt}={path}"])
+                output_paths[fmt] = path
 
-                command = [
-                    "syft",
-                    image_name,
-                    "-o", f"{fmt}={output_path}"
-                ]
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
 
-                result = subprocess.run(
-                    command,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout
-                )
-
-                if result.returncode == 0:
+            if result.returncode == 0:
+                for fmt, path in output_paths.items():
                     results[fmt] = {
                         "success": True,
-                        "file_path": output_path,
-                        "format": fmt
+                        "file_path": path,
+                        "format": fmt,
                     }
-                    self.logger.info(f"SBOM generated successfully: {fmt}")
-                else:
-                    results[fmt] = {
-                        "success": False,
-                        "error": result.stderr,
-                        "format": fmt
-                    }
-                    self.logger.error(f"SBOM generation failed for {fmt}: {result.stderr}")
+                self.logger.info(
+                    f"SBOM generated successfully in {len(output_formats)} formats (single pass)"
+                )
+            else:
+                # If the combined run fails, fall back to per-format runs so
+                # we still get whichever formats succeed individually.
+                self.logger.warning(
+                    f"Single-pass SBOM failed ({result.stderr.strip()}), "
+                    "falling back to per-format runs"
+                )
+                for fmt, path in output_paths.items():
+                    fallback = subprocess.run(
+                        ["syft", image_name, "-o", f"{fmt}={path}"],
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                    )
+                    if fallback.returncode == 0:
+                        results[fmt] = {"success": True, "file_path": path, "format": fmt}
+                        self.logger.info(f"SBOM generated successfully: {fmt}")
+                    else:
+                        results[fmt] = {"success": False, "error": fallback.stderr, "format": fmt}
+                        self.logger.error(f"SBOM generation failed for {fmt}: {fallback.stderr}")
 
             # Parse the syft-json format for statistics
             if "syft-json" in results and results["syft-json"]["success"]:

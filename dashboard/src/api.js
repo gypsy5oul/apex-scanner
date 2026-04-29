@@ -225,6 +225,38 @@ export const listApiKeys = () =>
 export const revokeApiKey = (keyId) =>
   apiV2.delete(`/api-keys/${keyId}`);
 
+// AI Triage
+export const getAiTriageStatus = () =>
+  apiV2.get('/ai-triage/status');
+export const getAiTriage = (scanId, force = false) =>
+  apiV2.get(`/scan/${scanId}/ai-triage`, { params: { force } });
+export const getAiRemediation = (scanId) =>
+  apiV2.get(`/scan/${scanId}/ai-remediation`);
+
+// Compliance
+export const getComplianceFrameworks = () =>
+  apiV2.get('/compliance/frameworks');
+export const getComplianceAssessment = (scanId, framework = null) =>
+  apiV2.get(`/scan/${scanId}/compliance`, { params: framework ? { framework } : {} });
+
+// VEX
+export const createVexStatement = (data) =>
+  apiV2.post('/vex/statements', data);
+export const listVexStatements = (params = {}) =>
+  apiV2.get('/vex/statements', { params });
+export const getVexStatement = (id) =>
+  apiV2.get(`/vex/statements/${id}`);
+export const updateVexStatement = (id, data) =>
+  apiV2.put(`/vex/statements/${id}`, data);
+export const deleteVexStatement = (id) =>
+  apiV2.delete(`/vex/statements/${id}`);
+export const exportVexDocument = (scanId) =>
+  apiV2.get(`/vex/document/${scanId}`);
+export const importVexDocument = (document) =>
+  apiV2.post('/vex/import', { document });
+export const getVexEnrichedVulns = (scanId, filterNotAffected = false) =>
+  apiV2.get(`/scan/${scanId}/vex-enriched`, { params: { filter_not_affected: filterNotAffected } });
+
 // WebSocket URL
 export const getWsUrl = (scanId) => {
   const host = window.location.hostname;

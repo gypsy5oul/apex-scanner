@@ -39,6 +39,7 @@ import WarningIcon from '@mui/icons-material/Warning';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import GppMaybeIcon from '@mui/icons-material/GppMaybe';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 import {
   getScanResult,
   getDependencyGraph,
@@ -52,6 +53,7 @@ import {
 } from '../api';
 import SeverityChip from '../components/SeverityChip';
 import { VulnerabilityDoughnut } from '../components/VulnerabilityChart';
+import AITriagePanel from '../components/AITriagePanel';
 
 // Rewrite report/SBOM URLs to use the actual API host instead of whatever the backend stored
 const getApiHost = () => {
@@ -70,6 +72,26 @@ const fixReportUrl = (url) => {
     return parsed.toString();
   } catch {
     return url;
+  }
+};
+
+// Download a file by fetching it and creating a blob download link
+const downloadFile = async (url, filename) => {
+  try {
+    const response = await fetch(fixReportUrl(url));
+    const blob = await response.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(blobUrl);
+  } catch (err) {
+    console.error('Download failed:', err);
+    // Fallback: open in new tab
+    window.open(fixReportUrl(url), '_blank');
   }
 };
 
@@ -483,17 +505,77 @@ function ScanResults() {
                 >
                   View Full Report
                 </Button>
+                <Button
+                  variant="contained"
+                  startIcon={<DownloadIcon />}
+                  color="primary"
+                  onClick={() => downloadFile(result.report_url, `${scanId}_vulnerability_report.html`)}
+                >
+                  Download Report
+                </Button>
                 {result.sbom?.html_report_url && (
-                  <Button
-                    variant="outlined"
-                    component={Link}
-                    href={fixReportUrl(result.sbom.html_report_url)}
-                    target="_blank"
-                    endIcon={<OpenInNewIcon />}
-                  >
-                    View SBOM Report
-                  </Button>
+                  <>
+                    <Button
+                      variant="outlined"
+                      component={Link}
+                      href={fixReportUrl(result.sbom.html_report_url)}
+                      target="_blank"
+                      endIcon={<OpenInNewIcon />}
+                    >
+                      View SBOM Report
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      startIcon={<DownloadIcon />}
+                      onClick={() => downloadFile(result.sbom.html_report_url, `${scanId}_sbom_report.html`)}
+                    >
+                      Download SBOM Report
+                    </Button>
+                  </>
                 )}
+              </Box>
+              {/* SBOM JSON Downloads */}
+              {(result.sbom?.spdx_url || result.sbom?.cyclonedx_url || result.sbom?.syft_url) && (
+                <Box sx={{ mt: 2 }}>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Download SBOM (JSON)
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                    {result.sbom?.spdx_url && (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<DownloadIcon />}
+                        onClick={() => downloadFile(result.sbom.spdx_url, `${scanId}_spdx.json`)}
+                      >
+                        SPDX
+                      </Button>
+                    )}
+                    {result.sbom?.cyclonedx_url && (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<DownloadIcon />}
+                        onClick={() => downloadFile(result.sbom.cyclonedx_url, `${scanId}_cyclonedx.json`)}
+                      >
+                        CycloneDX
+                      </Button>
+                    )}
+                    {result.sbom?.syft_url && (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<DownloadIcon />}
+                        onClick={() => downloadFile(result.sbom.syft_url, `${scanId}_syft.json`)}
+                      >
+                        Syft
+                      </Button>
+                    )}
+                  </Box>
+                </Box>
+              )}
+              {/* Export & Navigation */}
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mt: 2 }}>
                 <Button
                   variant="outlined"
                   startIcon={<DownloadIcon />}
@@ -544,6 +626,7 @@ function ScanResults() {
                 />
                 <Tab icon={<BuildIcon />} label="Remediation" iconPosition="start" />
                 <Tab icon={<AccountTreeIcon />} label="Dependencies" iconPosition="start" />
+                <Tab icon={<SmartToyIcon />} label="AI Triage" iconPosition="start" />
               </Tabs>
 
               <Box sx={{ p: 3 }}>
@@ -1081,6 +1164,11 @@ function ScanResults() {
                       <Typography color="text.secondary">Dependency graph data not available</Typography>
                     )}
                   </Box>
+                )}
+
+                {/* AI Triage Tab */}
+                {activeTab === 4 && (
+                  <AITriagePanel scanId={scanId} />
                 )}
               </Box>
             </Paper>

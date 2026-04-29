@@ -2220,3 +2220,382 @@ async def revoke_api_key_endpoint(
     if not revoked:
         raise HTTPException(status_code=404, detail="API key not found")
     return {"status": "revoked", "key_id": key_id}
+
+
+# ============== AI/ML Triage Endpoints ==============
+
+@router_v2.get(
+    "/scan/{scan_id}/ai-triage",
+    summary="AI Vulnerability Triage",
+    description="Get AI-powered vulnerability triage and risk classification",
+    tags=["ai-triage"]
+)
+async def get_ai_triage(
+    scan_id: str = Path(..., description="Scan ID"),
+    force: bool = Query(False, description="Force regeneration (bypass cache)"),
+    _user: TokenData = Depends(get_current_user)
+):
+    """Get AI-powered vulnerability triage for a scan"""
+    from app.ai_triage import generate_triage, is_ai_enabled
+
+    if not is_ai_enabled():
+        return {
+            "scan_id": scan_id,
+            "enabled": False,
+            "error": "AI triage unavailable — set ANTHROPIC_API_KEY environment variable",
+        }
+
+    redis_client = get_redis_client()
+    scan_data = redis_client.hgetall(scan_id)
+    if not scan_data:
+        raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
+
+    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulnerabilities = json.loads(vulns_raw) if vulns_raw else []
+
+    result = generate_triage(scan_id, scan_data, vulnerabilities, force=force)
+    return result
+
+
+@router_v2.get(
+    "/scan/{scan_id}/ai-remediation",
+    summary="AI Remediation Guide",
+    description="Get AI-generated remediation guide for a scan",
+    tags=["ai-triage"]
+)
+async def get_ai_remediation(
+    scan_id: str = Path(..., description="Scan ID"),
+    _user: TokenData = Depends(get_current_user)
+):
+    """Get AI-generated remediation summary"""
+    from app.ai_triage import generate_remediation_summary, is_ai_enabled
+
+    if not is_ai_enabled():
+        return {
+            "scan_id": scan_id,
+            "enabled": False,
+            "error": "AI remediation unavailable — set ANTHROPIC_API_KEY environment variable",
+        }
+
+    redis_client = get_redis_client()
+    scan_data = redis_client.hgetall(scan_id)
+    if not scan_data:
+        raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
+
+    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulnerabilities = json.loads(vulns_raw) if vulns_raw else []
+
+    result = generate_remediation_summary(scan_id, scan_data, vulnerabilities)
+    return result
+
+
+@router_v2.get(
+    "/ai-triage/status",
+    summary="AI Triage Status",
+    description="Check if AI triage is enabled and configured",
+    tags=["ai-triage"]
+)
+async def get_ai_triage_status(_user: TokenData = Depends(get_current_user)):
+    """Check AI triage availability"""
+    from app.ai_triage import is_ai_enabled
+    return {
+        "enabled": is_ai_enabled(),
+        "model": "claude-sonnet-4-20250514" if is_ai_enabled() else None,
+    }
+
+
+# ============== Compliance Reporting Endpoints ==============
+
+@router_v2.get(
+    "/compliance/frameworks",
+    summary="List Compliance Frameworks",
+    description="Get list of available compliance frameworks",
+    tags=["compliance"]
+)
+async def list_compliance_frameworks(_user: TokenData = Depends(get_current_user)):
+    """List available compliance frameworks"""
+    from app.compliance import get_frameworks_list
+    return {"frameworks": get_frameworks_list()}
+
+
+@router_v2.get(
+    "/scan/{scan_id}/compliance",
+    summary="Compliance Assessment",
+    description="Evaluate scan against all compliance frameworks",
+    tags=["compliance"]
+)
+async def get_compliance_assessment(
+    scan_id: str = Path(..., description="Scan ID"),
+    framework: Optional[str] = Query(None, description="Specific framework ID (e.g. pci-dss-4.0)"),
+    _user: TokenData = Depends(get_current_user)
+):
+    """Evaluate scan against compliance frameworks"""
+    from app.compliance import evaluate_framework, evaluate_all_frameworks, get_cached_compliance, cache_compliance
+
+    redis_client = get_redis_client()
+    scan_data = redis_client.hgetall(scan_id)
+    if not scan_data:
+        raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
+
+    # Check cache
+    cached = get_cached_compliance(scan_id, framework)
+    if cached:
+        cached["cached"] = True
+        return cached
+
+    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulnerabilities = json.loads(vulns_raw) if vulns_raw else []
+
+    # Calculate scan age
+    scan_ts = scan_data.get("scan_timestamp", "")
+    scan_age_days = 0
+    if scan_ts:
+        try:
+            scan_dt = datetime.fromisoformat(scan_ts.replace("Z", "+00:00"))
+            scan_age_days = (datetime.now(timezone.utc) - scan_dt).total_seconds() / 86400
+        except Exception:
+            pass
+
+    if framework:
+        result = evaluate_framework(framework, scan_data, vulnerabilities, scan_age_days)
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+    else:
+        result = evaluate_all_frameworks(scan_data, vulnerabilities, scan_age_days)
+
+    result["scan_id"] = scan_id
+    result["cached"] = False
+    cache_compliance(scan_id, result, framework)
+    return result
+
+
+# ============== VEX (Vulnerability Exploitability eXchange) Endpoints ==============
+
+class VEXStatementCreate(BaseModel):
+    """Create a VEX statement"""
+    cve_id: str = Field(..., description="CVE ID (e.g. CVE-2024-1234)")
+    product: str = Field(..., description="Product identifier (e.g. docker image name)")
+    status: str = Field(..., description="VEX status: not_affected, affected, fixed, under_investigation")
+    justification: Optional[str] = Field(None, description="Justification for not_affected status")
+    impact_statement: Optional[str] = Field(None, description="Impact assessment")
+    action_statement: Optional[str] = Field(None, description="Recommended action")
+
+
+class VEXStatementUpdate(BaseModel):
+    """Update a VEX statement"""
+    status: Optional[str] = Field(None, description="New VEX status")
+    justification: Optional[str] = Field(None, description="Updated justification")
+    impact_statement: Optional[str] = Field(None, description="Updated impact")
+    action_statement: Optional[str] = Field(None, description="Updated action")
+
+
+class VEXImportRequest(BaseModel):
+    """Import an OpenVEX document"""
+    document: Dict[str, Any] = Field(..., description="OpenVEX document JSON")
+
+
+@router_v2.post(
+    "/vex/statements",
+    summary="Create VEX Statement",
+    description="Create a new VEX statement for a vulnerability",
+    tags=["vex"]
+)
+async def create_vex_statement(
+    request: VEXStatementCreate = Body(...),
+    admin: TokenData = Depends(get_current_admin)
+):
+    """Create a VEX statement (Admin only)"""
+    from app.vex import get_vex_manager
+
+    mgr = get_vex_manager()
+    try:
+        statement = mgr.create_statement(
+            cve_id=request.cve_id,
+            product=request.product,
+            status=request.status,
+            justification=request.justification,
+            impact_statement=request.impact_statement,
+            action_statement=request.action_statement,
+            author=admin.username,
+        )
+        return {"status": "created", "statement": statement}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router_v2.get(
+    "/vex/statements",
+    summary="List VEX Statements",
+    description="List VEX statements with optional filtering",
+    tags=["vex"]
+)
+async def list_vex_statements(
+    cve_id: Optional[str] = Query(None, description="Filter by CVE ID"),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    product: Optional[str] = Query(None, description="Filter by product"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    _user: TokenData = Depends(get_current_user)
+):
+    """List VEX statements"""
+    from app.vex import get_vex_manager
+
+    mgr = get_vex_manager()
+    return mgr.list_statements(
+        cve_id=cve_id,
+        status=status,
+        product=product,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router_v2.get(
+    "/vex/statements/{statement_id}",
+    summary="Get VEX Statement",
+    description="Get a specific VEX statement",
+    tags=["vex"]
+)
+async def get_vex_statement(
+    statement_id: str = Path(..., description="Statement ID"),
+    _user: TokenData = Depends(get_current_user)
+):
+    """Get a VEX statement by ID"""
+    from app.vex import get_vex_manager
+
+    mgr = get_vex_manager()
+    statement = mgr.get_statement(statement_id)
+    if not statement:
+        raise HTTPException(status_code=404, detail="VEX statement not found")
+    return statement
+
+
+@router_v2.put(
+    "/vex/statements/{statement_id}",
+    summary="Update VEX Statement",
+    description="Update an existing VEX statement",
+    tags=["vex"]
+)
+async def update_vex_statement(
+    statement_id: str = Path(..., description="Statement ID"),
+    request: VEXStatementUpdate = Body(...),
+    admin: TokenData = Depends(get_current_admin)
+):
+    """Update a VEX statement (Admin only)"""
+    from app.vex import get_vex_manager
+
+    mgr = get_vex_manager()
+    try:
+        statement = mgr.update_statement(
+            statement_id=statement_id,
+            status=request.status,
+            justification=request.justification,
+            impact_statement=request.impact_statement,
+            action_statement=request.action_statement,
+        )
+        if not statement:
+            raise HTTPException(status_code=404, detail="VEX statement not found")
+        return {"status": "updated", "statement": statement}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router_v2.delete(
+    "/vex/statements/{statement_id}",
+    summary="Delete VEX Statement",
+    description="Delete a VEX statement",
+    tags=["vex"]
+)
+async def delete_vex_statement(
+    statement_id: str = Path(..., description="Statement ID"),
+    admin: TokenData = Depends(get_current_admin)
+):
+    """Delete a VEX statement (Admin only)"""
+    from app.vex import get_vex_manager
+
+    mgr = get_vex_manager()
+    deleted = mgr.delete_statement(statement_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="VEX statement not found")
+    return {"status": "deleted", "statement_id": statement_id}
+
+
+@router_v2.get(
+    "/vex/document/{scan_id}",
+    summary="Export VEX Document",
+    description="Export VEX statements as an OpenVEX document for a scan",
+    tags=["vex"]
+)
+async def export_vex_document(
+    scan_id: str = Path(..., description="Scan ID"),
+    _user: TokenData = Depends(get_current_user)
+):
+    """Export OpenVEX document for a scan"""
+    from app.vex import get_vex_manager
+
+    redis_client = get_redis_client()
+    scan_data = redis_client.hgetall(scan_id)
+    if not scan_data:
+        raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
+
+    mgr = get_vex_manager()
+    product = scan_data.get("image_name", "")
+    document = mgr.generate_openvex_document(scan_id, product)
+    return document
+
+
+@router_v2.post(
+    "/vex/import",
+    summary="Import VEX Document",
+    description="Import VEX statements from an OpenVEX document",
+    tags=["vex"]
+)
+async def import_vex_document(
+    request: VEXImportRequest = Body(...),
+    admin: TokenData = Depends(get_current_admin)
+):
+    """Import an OpenVEX document (Admin only)"""
+    from app.vex import get_vex_manager
+
+    mgr = get_vex_manager()
+    result = mgr.import_openvex_document(request.document, author=admin.username)
+    return result
+
+
+@router_v2.get(
+    "/scan/{scan_id}/vex-enriched",
+    summary="VEX-Enriched Vulnerabilities",
+    description="Get vulnerabilities enriched with VEX status information",
+    tags=["vex"]
+)
+async def get_vex_enriched_vulns(
+    scan_id: str = Path(..., description="Scan ID"),
+    filter_not_affected: bool = Query(False, description="Filter out not_affected vulnerabilities"),
+    _user: TokenData = Depends(get_current_user)
+):
+    """Get vulnerabilities with VEX status applied"""
+    from app.vex import get_vex_manager
+
+    redis_client = get_redis_client()
+    scan_data = redis_client.hgetall(scan_id)
+    if not scan_data:
+        raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
+
+    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    if not vulns_raw:
+        return {"scan_id": scan_id, "vulnerabilities": [], "total": 0}
+
+    vulnerabilities = json.loads(vulns_raw)
+    mgr = get_vex_manager()
+    product = scan_data.get("image_name", "")
+    enriched = mgr.apply_vex_to_vulnerabilities(vulnerabilities, product_filter=product)
+
+    if filter_not_affected:
+        enriched = [v for v in enriched if v.get("vex_status") != "not_affected"]
+
+    return {
+        "scan_id": scan_id,
+        "vulnerabilities": enriched,
+        "total": len(enriched),
+        "vex_applied": True,
+    }

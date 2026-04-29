@@ -15,7 +15,11 @@ class GrypeScanner(BaseScanner):
         super().__init__("grype")
 
     def preflight(self) -> Tuple[bool, Optional[str]]:
-        """Check grype binary exists AND vulnerability DB is loaded."""
+        """Check grype binary exists AND vulnerability DB is loaded.
+
+        If the DB is stale or missing, attempt an automatic update
+        (best-effort, capped at 120 s) so the scan can proceed.
+        """
         ok, err = super().preflight()
         if not ok:
             return ok, err
@@ -29,12 +33,23 @@ class GrypeScanner(BaseScanner):
                 timeout=15,
             )
             if result.returncode != 0:
-                return False, (
-                    f"Grype DB missing or stale: {result.stderr.strip()}. "
-                    "Run: grype db update"
+                self.logger.warning(
+                    f"Grype DB stale/missing ({result.stderr.strip()}), "
+                    "attempting automatic update..."
                 )
+                update = subprocess.run(
+                    ["grype", "db", "update"],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if update.returncode != 0:
+                    return False, (
+                        f"Grype DB update failed: {update.stderr.strip()}"
+                    )
+                self.logger.info("Grype DB updated successfully during preflight")
         except subprocess.TimeoutExpired:
-            return False, "Grype DB check timed out"
+            return False, "Grype DB check/update timed out"
         except OSError as exc:
             return False, f"Grype DB check failed: {exc}"
 

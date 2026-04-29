@@ -283,11 +283,14 @@ class DigestCache:
             # Always resolve current digest from remote registry via skopeo.
             # Never fall back to local docker inspect — it uses the local
             # daemon cache which can be stale for mutable tags.
+            # Use --tls-verify=false so internal HTTP registries don't incur
+            # a 2-3s penalty from the failed HTTPS attempt before HTTP fallback.
             result = subprocess.run(
-                ["skopeo", "inspect", "--format", "{{.Digest}}", f"docker://{image_name}"],
+                ["skopeo", "inspect", "--tls-verify=false",
+                 "--format", "{{.Digest}}", f"docker://{image_name}"],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=30
             )
             if result.returncode == 0 and result.stdout.strip():
                 digest = result.stdout.strip().replace("sha256:", "")

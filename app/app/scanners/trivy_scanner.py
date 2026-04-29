@@ -73,8 +73,9 @@ class TrivyScanner(BaseScanner):
                 "--skip-version-check",  # Skip version check to avoid noise/failures
                 "--db-repository", "ghcr.io/aquasecurity/trivy-db:2",
                 "--cache-dir", trivy_cache,
-                image_name
             ]
+
+            command.append(image_name)
 
             result = subprocess.run(
                 command,
