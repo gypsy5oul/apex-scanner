@@ -1,8 +1,10 @@
 """
 Grype vulnerability scanner implementation
 """
+import glob
 import json
 import os
+import shutil
 import subprocess
 from typing import Dict, Any, Optional, Tuple
 from .base import BaseScanner
@@ -48,12 +50,38 @@ class GrypeScanner(BaseScanner):
                         f"Grype DB update failed: {update.stderr.strip()}"
                     )
                 self.logger.info("Grype DB updated successfully during preflight")
+                # `grype db update` leaves stale grype-db-download* dirs in the
+                # cache, each ~1.5GB. Without this, a worker running for weeks
+                # accumulates hundreds of them and fills the disk.
+                self._cleanup_stale_db_downloads()
         except subprocess.TimeoutExpired:
             return False, "Grype DB check/update timed out"
         except OSError as exc:
             return False, f"Grype DB check failed: {exc}"
 
         return True, None
+
+    def _cleanup_stale_db_downloads(self) -> None:
+        """Remove leftover grype-db-download* dirs from previous updates.
+
+        Grype writes each DB download into a fresh `grype-db-download<rand>`
+        directory and only renames the active one into `db/<schema>/`. The
+        stale dirs are ~1.5GB each and otherwise persist forever.
+        """
+        cache_dir = os.environ.get(
+            "GRYPE_DB_CACHE_DIR", "/home/scanner/.cache/grype/db"
+        )
+        removed = 0
+        for path in glob.glob(os.path.join(cache_dir, "grype-db-download*")):
+            try:
+                shutil.rmtree(path, ignore_errors=True)
+                removed += 1
+            except OSError:
+                pass
+        if removed:
+            self.logger.info(
+                f"Cleaned up {removed} stale grype-db-download dirs from {cache_dir}"
+            )
 
     def scan(self, image_name: str, output_path: str, timeout: int = 300) -> Dict[str, Any]:
         """
