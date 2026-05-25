@@ -5,6 +5,8 @@ Handles automatic updates for vulnerability databases and scanner tools
 NOTE: Tool version checks and DB updates run on the WORKER container
 where tools are installed. Results are stored in Redis and read by the API.
 """
+import glob
+import shutil
 import subprocess
 import json
 import httpx
@@ -292,6 +294,12 @@ class UpdateService:
 
             success = result.returncode == 0
 
+            # `grype db update` leaves leftover `grype-db-download<rand>` dirs
+            # (~1.5GB each) in the cache. Without cleanup, a worker running
+            # for weeks accumulates hundreds of them and fills the disk.
+            if success:
+                self._cleanup_stale_grype_downloads()
+
             # Get DB info after update
             db_info = self._get_grype_db_info()
 
@@ -343,6 +351,30 @@ class UpdateService:
                 "error": str(e),
                 "timestamp": datetime.now().isoformat()
             }
+
+    @staticmethod
+    def _cleanup_stale_grype_downloads() -> None:
+        """Remove leftover grype-db-download* dirs from previous updates.
+
+        Grype writes each DB download into a fresh `grype-db-download<rand>`
+        directory and only renames the active one into `db/<schema>/`. The
+        stale dirs are ~1.5GB each and otherwise persist forever.
+        """
+        cache_dir = os.environ.get(
+            "GRYPE_DB_CACHE_DIR", "/home/scanner/.cache/grype/db"
+        )
+        removed = 0
+        for path in glob.glob(os.path.join(cache_dir, "grype-db-download*")):
+            try:
+                shutil.rmtree(path, ignore_errors=True)
+                removed += 1
+            except OSError:
+                pass
+        if removed:
+            logger.info(
+                f"Cleaned up {removed} stale grype-db-download dirs",
+                cache_dir=cache_dir,
+            )
 
     def update_trivy_db(self) -> Dict[str, Any]:
         """
