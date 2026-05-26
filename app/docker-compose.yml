@@ -11,6 +11,13 @@ x-common-env: &common-env
   SCAN_RESULT_TTL: ${SCAN_RESULT_TTL:-2592000}
   LOG_FORMAT: ${LOG_FORMAT:-json}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  # AI Triage — set AI_TRIAGE_PROVIDER to "openai" (local vLLM/Ollama/etc)
+  # or "anthropic" (cloud). Leave blank to disable.
+  AI_TRIAGE_PROVIDER: ${AI_TRIAGE_PROVIDER:-}
+  AI_TRIAGE_BASE_URL: ${AI_TRIAGE_BASE_URL:-}
+  AI_TRIAGE_MODEL: ${AI_TRIAGE_MODEL:-}
+  AI_TRIAGE_API_KEY: ${AI_TRIAGE_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
 
 x-auth-env: &auth-env
   ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}

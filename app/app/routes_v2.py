@@ -2296,12 +2296,9 @@ async def get_ai_remediation(
     tags=["ai-triage"]
 )
 async def get_ai_triage_status(_user: TokenData = Depends(get_current_user)):
-    """Check AI triage availability"""
-    from app.ai_triage import is_ai_enabled
-    return {
-        "enabled": is_ai_enabled(),
-        "model": "claude-sonnet-4-20250514" if is_ai_enabled() else None,
-    }
+    """Check AI triage availability and the active provider/model."""
+    from app.ai_triage import get_status
+    return get_status()
 
 
 # ============== Compliance Reporting Endpoints ==============

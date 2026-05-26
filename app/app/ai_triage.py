@@ -1,26 +1,38 @@
 """
 AI/ML-Assisted Vulnerability Triage Engine
-Uses Claude API for intelligent remediation summaries and risk classification.
-Gracefully disabled when ANTHROPIC_API_KEY is not set.
+
+Supports two providers, selected via env var ``AI_TRIAGE_PROVIDER``:
+- ``anthropic``  — Claude via the Anthropic API (requires ANTHROPIC_API_KEY).
+- ``openai``     — Any OpenAI-compatible endpoint (local vLLM, Ollama, LM
+                    Studio, etc.). Requires AI_TRIAGE_BASE_URL + AI_TRIAGE_MODEL;
+                    AI_TRIAGE_API_KEY is optional for self-hosted servers.
+
+If neither provider is configured, AI triage gracefully reports
+``enabled: false`` instead of erroring.
 """
 import json
-import hashlib
+import os
+import re
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 
-from app.config import settings, get_redis_client
+from app.config import get_redis_client
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# Try importing anthropic SDK
 try:
     import anthropic
     ANTHROPIC_AVAILABLE = True
 except ImportError:
     ANTHROPIC_AVAILABLE = False
-    logger.info("anthropic SDK not installed — AI triage disabled")
+
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
 
 CACHE_TTL = 86400  # 24 hours
 CACHE_PREFIX = "ai_triage:"
@@ -28,32 +40,150 @@ CACHE_PREFIX = "ai_triage:"
 
 @dataclass
 class TriageResult:
-    """AI triage result for a scan"""
     scan_id: str
-    risk_classification: str  # "critical_action", "high_priority", "monitor", "accept_risk"
+    risk_classification: str
     executive_summary: str
     prioritized_actions: List[Dict[str, Any]]
     exploit_context: str
-    remediation_effort: str  # "minimal", "moderate", "significant", "major"
+    remediation_effort: str
     generated_at: str
     model_used: str
     cached: bool = False
 
 
+# --------------------------------------------------------------------------
+# Provider configuration
+# --------------------------------------------------------------------------
+
+def _provider() -> str:
+    """Resolve the active provider: ``openai``, ``anthropic``, or ``none``."""
+    explicit = (os.environ.get("AI_TRIAGE_PROVIDER") or "").strip().lower()
+    if explicit in ("openai", "anthropic"):
+        return explicit
+    # Auto-detect: prefer local OpenAI-compatible if a base URL is set.
+    if os.environ.get("AI_TRIAGE_BASE_URL") and OPENAI_AVAILABLE:
+        return "openai"
+    if os.environ.get("ANTHROPIC_API_KEY") and ANTHROPIC_AVAILABLE:
+        return "anthropic"
+    return "none"
+
+
+def _model_id() -> str:
+    """Resolve the model identifier for the active provider."""
+    if _provider() == "openai":
+        return os.environ.get("AI_TRIAGE_MODEL", "")
+    return os.environ.get("AI_TRIAGE_MODEL", "claude-sonnet-4-20250514")
+
+
 def is_ai_enabled() -> bool:
-    """Check if AI triage is available."""
-    api_key = _get_api_key()
-    return ANTHROPIC_AVAILABLE and bool(api_key)
+    provider = _provider()
+    if provider == "anthropic":
+        return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if provider == "openai":
+        # OpenAI-compatible self-hosted servers often don't need an API key
+        return bool(os.environ.get("AI_TRIAGE_BASE_URL")) and bool(_model_id())
+    return False
 
 
-def _get_api_key() -> Optional[str]:
-    """Get Anthropic API key from environment."""
-    import os
-    return os.environ.get("ANTHROPIC_API_KEY", "")
+def get_status() -> Dict[str, Any]:
+    """Return a small dict describing the current AI triage config."""
+    provider = _provider()
+    return {
+        "enabled": is_ai_enabled(),
+        "provider": provider if provider != "none" else None,
+        "model": _model_id() if is_ai_enabled() else None,
+        "endpoint": os.environ.get("AI_TRIAGE_BASE_URL") if provider == "openai" else None,
+    }
 
+
+# --------------------------------------------------------------------------
+# LLM call routing
+# --------------------------------------------------------------------------
+
+# Strip Qwen-style <think>...</think> reasoning blocks and common preambles.
+# The model sometimes wraps its actual answer in markdown fences too.
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_LEADING_PREAMBLE = re.compile(
+    r"^\s*(?:Here(?:'s| is) (?:a )?(?:thinking process|my answer|the JSON|the response)[^\n{]*\n+)+",
+    re.IGNORECASE,
+)
+
+
+def _extract_json(text: str) -> str:
+    """Pull a JSON object out of a possibly-noisy LLM response."""
+    text = _THINK_BLOCK.sub("", text).strip()
+    text = _LEADING_PREAMBLE.sub("", text)
+
+    # Strip ```json ... ``` fences if present.
+    if text.startswith("```"):
+        # Drop the first fence line and the trailing fence.
+        text = text.split("```", 2)
+        # text[0] = "", text[1] = "json\n{...}" or "{...}", text[2] = trailing
+        body = text[1] if len(text) > 1 else ""
+        if body.lower().startswith("json"):
+            body = body[4:]
+        text = body.strip().rstrip("`").strip()
+
+    # Final fallback: locate the first '{' and the matching last '}'.
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return text[start:end + 1]
+    return text
+
+
+def _call_llm(prompt: str, max_tokens: int = 2000) -> str:
+    """Send a single-turn prompt to the configured LLM and return the raw text."""
+    provider = _provider()
+    if provider == "anthropic":
+        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        response = client.messages.create(
+            model=_model_id(),
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text
+
+    if provider == "openai":
+        client = openai.OpenAI(
+            api_key=os.environ.get("AI_TRIAGE_API_KEY", "none"),
+            base_url=os.environ["AI_TRIAGE_BASE_URL"].rstrip("/"),
+            timeout=120.0,
+        )
+        # Ask for JSON only — keeps Qwen from preambling. Some local servers
+        # don't support response_format, so we tolerate failure and retry plain.
+        kwargs = dict(
+            model=_model_id(),
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a senior container security engineer. "
+                        "Reply with raw JSON only — no <think> blocks, "
+                        "no markdown fences, no commentary."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=max_tokens,
+            temperature=0.2,
+        )
+        try:
+            response = client.chat.completions.create(
+                response_format={"type": "json_object"}, **kwargs
+            )
+        except Exception:
+            response = client.chat.completions.create(**kwargs)
+        return response.choices[0].message.content or ""
+
+    raise RuntimeError("No AI provider configured")
+
+
+# --------------------------------------------------------------------------
+# Vulnerability summary builder (unchanged from prior version)
+# --------------------------------------------------------------------------
 
 def _build_vuln_summary(vulnerabilities: List[Dict[str, Any]], scan_data: Dict[str, Any]) -> str:
-    """Build a concise vulnerability summary for the AI prompt."""
     severity_counts = {
         "critical": int(scan_data.get("critical", 0)),
         "high": int(scan_data.get("high", 0)),
@@ -61,13 +191,8 @@ def _build_vuln_summary(vulnerabilities: List[Dict[str, Any]], scan_data: Dict[s
         "low": int(scan_data.get("low", 0)),
     }
 
-    # Group vulns by severity, take top ones
-    critical_vulns = []
-    high_vulns = []
-    kev_vulns = []
-    high_epss_vulns = []
-
-    for v in vulnerabilities[:500]:  # Limit to avoid token overflow
+    critical_vulns, high_vulns, kev_vulns, high_epss_vulns = [], [], [], []
+    for v in vulnerabilities[:500]:
         severity = v.get("severity", "").lower()
         cve_id = v.get("id", v.get("cve_id", "unknown"))
         pkg = v.get("package", v.get("artifact", {}).get("name", "unknown"))
@@ -77,14 +202,11 @@ def _build_vuln_summary(vulnerabilities: List[Dict[str, Any]], scan_data: Dict[s
         is_kev = v.get("kev_match", v.get("in_kev", False))
 
         entry = {
-            "cve": cve_id,
-            "package": pkg,
-            "version": version,
+            "cve": cve_id, "package": pkg, "version": version,
             "fix": fix or "none",
             "epss": round(float(epss), 4) if epss else 0,
             "kev": bool(is_kev),
         }
-
         if severity == "critical":
             critical_vulns.append(entry)
         elif severity == "high":
@@ -110,17 +232,14 @@ Base OS: {scan_data.get('base_image_os', 'unknown')} {scan_data.get('base_image_
         summary += f"\nCISA KEV (Known Exploited) Vulnerabilities ({len(kev_vulns)}):\n"
         for v in kev_vulns[:10]:
             summary += f"  - {v['cve']}: {v['package']}@{v['version']} (fix: {v['fix']})\n"
-
     if high_epss_vulns:
         summary += f"\nHigh EPSS Score (>50% exploit probability) ({len(high_epss_vulns)}):\n"
         for v in high_epss_vulns[:10]:
             summary += f"  - {v['cve']}: {v['package']}@{v['version']} EPSS={v['epss']} (fix: {v['fix']})\n"
-
     if critical_vulns:
         summary += f"\nCritical Vulnerabilities ({len(critical_vulns)}):\n"
         for v in critical_vulns[:15]:
             summary += f"  - {v['cve']}: {v['package']}@{v['version']} (fix: {v['fix']}) EPSS={v['epss']}\n"
-
     if high_vulns:
         summary += f"\nHigh Vulnerabilities (top 15 of {len(high_vulns)}):\n"
         for v in high_vulns[:15]:
@@ -129,12 +248,15 @@ Base OS: {scan_data.get('base_image_os', 'unknown')} {scan_data.get('base_image_
     return summary
 
 
+# --------------------------------------------------------------------------
+# Cache helpers
+# --------------------------------------------------------------------------
+
 def _get_cache_key(scan_id: str) -> str:
     return f"{CACHE_PREFIX}{scan_id}"
 
 
 def get_cached_triage(scan_id: str) -> Optional[Dict[str, Any]]:
-    """Get cached AI triage result."""
     r = get_redis_client()
     cached = r.get(_get_cache_key(scan_id))
     if cached:
@@ -145,10 +267,13 @@ def get_cached_triage(scan_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _cache_triage(scan_id: str, result: Dict[str, Any]):
-    """Cache AI triage result."""
     r = get_redis_client()
     r.setex(_get_cache_key(scan_id), CACHE_TTL, json.dumps(result))
 
+
+# --------------------------------------------------------------------------
+# Public API
+# --------------------------------------------------------------------------
 
 def generate_triage(
     scan_id: str,
@@ -156,20 +281,13 @@ def generate_triage(
     vulnerabilities: List[Dict[str, Any]],
     force: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Generate AI-powered vulnerability triage for a scan.
-
-    Returns a structured triage result with risk classification,
-    executive summary, and prioritized remediation actions.
-    """
     if not is_ai_enabled():
         return {
             "scan_id": scan_id,
-            "error": "AI triage unavailable — set ANTHROPIC_API_KEY to enable",
+            "error": "AI triage unavailable — configure AI_TRIAGE_PROVIDER (anthropic or openai)",
             "enabled": False,
         }
 
-    # Check cache first
     if not force:
         cached = get_cached_triage(scan_id)
         if cached:
@@ -207,22 +325,8 @@ Classification rules:
 Limit prioritized_actions to top 5 most impactful. Focus on actions that fix the most CVEs."""
 
     try:
-        client = anthropic.Anthropic(api_key=_get_api_key())
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-        response_text = response.content[0].text.strip()
-        # Parse JSON from response
-        if response_text.startswith("```"):
-            response_text = response_text.split("```")[1]
-            if response_text.startswith("json"):
-                response_text = response_text[4:]
-            response_text = response_text.strip()
-
-        ai_result = json.loads(response_text)
+        raw = _call_llm(prompt, max_tokens=2000)
+        ai_result = json.loads(_extract_json(raw))
 
         result = {
             "scan_id": scan_id,
@@ -232,11 +336,11 @@ Limit prioritized_actions to top 5 most impactful. Focus on actions that fix the
             "exploit_context": ai_result.get("exploit_context", ""),
             "remediation_effort": ai_result.get("remediation_effort", "moderate"),
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "model_used": "claude-sonnet-4-20250514",
+            "model_used": _model_id(),
+            "provider": _provider(),
             "cached": False,
             "enabled": True,
         }
-
         _cache_triage(scan_id, result)
         logger.info("AI triage generated", scan_id=scan_id, classification=result["risk_classification"])
         return result
@@ -262,11 +366,10 @@ def generate_remediation_summary(
     scan_data: Dict[str, Any],
     vulnerabilities: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Generate a human-readable remediation summary using AI."""
     if not is_ai_enabled():
         return {
             "scan_id": scan_id,
-            "error": "AI remediation unavailable — set ANTHROPIC_API_KEY to enable",
+            "error": "AI remediation unavailable — configure AI_TRIAGE_PROVIDER (anthropic or openai)",
             "enabled": False,
         }
 
@@ -305,29 +408,17 @@ Write a concise remediation guide in JSON format:
 Keep it practical. Limit to the 10 most impactful package updates."""
 
     try:
-        client = anthropic.Anthropic(api_key=_get_api_key())
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-        response_text = response.content[0].text.strip()
-        if response_text.startswith("```"):
-            response_text = response_text.split("```")[1]
-            if response_text.startswith("json"):
-                response_text = response_text[4:]
-            response_text = response_text.strip()
-
-        ai_result = json.loads(response_text)
+        raw = _call_llm(prompt, max_tokens=2000)
+        ai_result = json.loads(_extract_json(raw))
         result = {
             "scan_id": scan_id,
             **ai_result,
             "generated_at": datetime.now(timezone.utc).isoformat(),
+            "model_used": _model_id(),
+            "provider": _provider(),
             "cached": False,
             "enabled": True,
         }
-
         r.setex(cache_key, CACHE_TTL, json.dumps(result))
         return result
 

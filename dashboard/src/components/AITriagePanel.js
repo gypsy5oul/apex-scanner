@@ -60,6 +60,7 @@ function AITriagePanel({ scanId }) {
   const [remLoading, setRemLoading] = useState(false);
   const [error, setError] = useState(null);
   const [aiEnabled, setAiEnabled] = useState(null);
+  const [aiStatus, setAiStatus] = useState(null);
   const [showRemediation, setShowRemediation] = useState(false);
   const [checking, setChecking] = useState(true);
 
@@ -71,6 +72,7 @@ function AITriagePanel({ scanId }) {
     try {
       const response = await getAiTriageStatus();
       setAiEnabled(response.data.enabled);
+      setAiStatus(response.data);
     } catch {
       setAiEnabled(false);
     }
@@ -115,8 +117,9 @@ function AITriagePanel({ scanId }) {
   if (aiEnabled === false) {
     return (
       <Alert severity="info" icon={<SmartToyIcon />}>
-        AI-powered triage is not configured. Set the <code>ANTHROPIC_API_KEY</code> environment
-        variable to enable intelligent vulnerability analysis and remediation recommendations.
+        AI-powered triage is not configured. Set <code>AI_TRIAGE_PROVIDER</code> to either
+        {' '}<code>openai</code> (any OpenAI-compatible endpoint — local vLLM, Ollama, LM Studio)
+        {' '}or <code>anthropic</code> (Claude cloud) in the environment to enable.
       </Alert>
     );
   }
@@ -130,10 +133,16 @@ function AITriagePanel({ scanId }) {
         <Box sx={{ textAlign: 'center', py: 4 }}>
           <SmartToyIcon sx={{ fontSize: 48, color: 'primary.main', mb: 2 }} />
           <Typography variant="h6" gutterBottom>AI-Powered Vulnerability Triage</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            Use Claude to analyze vulnerabilities, assess exploitability, and generate
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            Analyze vulnerabilities, assess exploitability, and generate
             prioritized remediation recommendations.
           </Typography>
+          {aiStatus?.model && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 3 }}>
+              Powered by <code>{aiStatus.model}</code> via {aiStatus.provider}
+              {aiStatus.endpoint && ` (${aiStatus.endpoint})`}
+            </Typography>
+          )}
           <Button
             variant="contained"
             size="large"
