@@ -11,6 +11,7 @@ from celery.schedules import crontab
 import asyncio
 
 from app.config import settings, get_redis_client
+from app.time_utils import now_iso
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -342,7 +343,7 @@ class ScheduleManager:
             "google_chat_webhook": google_chat_webhook or "",
             "enabled": enabled,
             "description": description,
-            "created_at": datetime.now().isoformat(),
+            "created_at": now_iso(),
             "last_run": None,
             "next_run": None,
             "run_count": 0
@@ -440,7 +441,7 @@ class ScheduleManager:
     ) -> None:
         """Record a schedule run"""
         schedule_id = f"schedule:{name}"
-        now = datetime.now().isoformat()
+        now = now_iso()
 
         self.redis.hset(schedule_id, "last_run", now)
         self.redis.hincrby(schedule_id, "run_count", 1)

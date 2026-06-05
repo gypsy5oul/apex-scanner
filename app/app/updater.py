@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 
 from app.config import settings, get_redis_client
+from app.time_utils import now_iso
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -117,7 +118,8 @@ class UpdateService:
         if last_grype:
             try:
                 last_dt = datetime.fromisoformat(last_grype)
-                hours_since = (datetime.now() - last_dt).total_seconds() / 3600
+                # Both sides need to be TZ-aware now that we store +05:30 offsets.
+                hours_since = (datetime.now().astimezone() - last_dt).total_seconds() / 3600
                 status["grype_hours_since_update"] = round(hours_since, 1)
                 status["grype_update_due"] = hours_since > 24
             except Exception:
@@ -150,7 +152,7 @@ class UpdateService:
                     "current_version": current,
                     "latest_version": latest,
                     "update_available": update_available,
-                    "last_checked": datetime.now().isoformat(),
+                    "last_checked": now_iso(),
                     "repository": f"https://github.com/{repo}"
                 }
 
@@ -166,11 +168,11 @@ class UpdateService:
                 results[tool_name] = {
                     "name": tool_name,
                     "error": str(e),
-                    "last_checked": datetime.now().isoformat()
+                    "last_checked": now_iso()
                 }
 
         result = {
-            "checked_at": datetime.now().isoformat(),
+            "checked_at": now_iso(),
             "tools": results,
             "updates_available": any(
                 r.get("update_available", False)
@@ -307,7 +309,7 @@ class UpdateService:
                 "tool": "grype",
                 "action": "db_update",
                 "success": success,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": now_iso(),
                 "output": result.stdout[:1000] if result.stdout else "",
                 "error": result.stderr[:500] if result.stderr and not success else "",
                 "db_info": db_info
@@ -340,7 +342,7 @@ class UpdateService:
                 "action": "db_update",
                 "success": False,
                 "error": "Update timed out",
-                "timestamp": datetime.now().isoformat()
+                "timestamp": now_iso()
             }
         except Exception as e:
             logger.error(f"Grype DB update failed: {e}")
@@ -349,7 +351,7 @@ class UpdateService:
                 "action": "db_update",
                 "success": False,
                 "error": str(e),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": now_iso()
             }
 
     @staticmethod
@@ -400,7 +402,7 @@ class UpdateService:
                 "tool": "trivy",
                 "action": "db_update",
                 "success": success,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": now_iso(),
                 "output": result.stdout[:1000] if result.stdout else "",
                 "error": result.stderr[:500] if result.stderr and not success else ""
             }
@@ -417,7 +419,7 @@ class UpdateService:
                 "action": "db_update",
                 "success": False,
                 "error": "Update timed out",
-                "timestamp": datetime.now().isoformat()
+                "timestamp": now_iso()
             }
         except Exception as e:
             logger.error(f"Trivy DB update failed: {e}")
@@ -426,7 +428,7 @@ class UpdateService:
                 "action": "db_update",
                 "success": False,
                 "error": str(e),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": now_iso()
             }
 
     def _get_grype_db_info(self) -> Dict[str, Any]:
@@ -492,7 +494,8 @@ class UpdateService:
         if last_grype:
             try:
                 last_dt = datetime.fromisoformat(last_grype)
-                hours_since = (datetime.now() - last_dt).total_seconds() / 3600
+                # Both sides need to be TZ-aware now that we store +05:30 offsets.
+                hours_since = (datetime.now().astimezone() - last_dt).total_seconds() / 3600
                 status["grype_hours_since_update"] = round(hours_since, 1)
                 status["grype_update_due"] = hours_since > 24
             except Exception:
@@ -512,7 +515,7 @@ class UpdateService:
         logger.info("Running scheduled vulnerability database updates")
 
         results = {
-            "started_at": datetime.now().isoformat(),
+            "started_at": now_iso(),
             "updates": []
         }
 
@@ -528,7 +531,7 @@ class UpdateService:
         tool_updates = self.check_tool_updates()
         results["tool_updates"] = tool_updates
 
-        results["completed_at"] = datetime.now().isoformat()
+        results["completed_at"] = now_iso()
         results["all_successful"] = all(
             u.get("success", False) for u in results["updates"]
         )
@@ -544,7 +547,7 @@ class UpdateService:
         # Store notification for dashboard
         notification = {
             "type": "tool_updates_available",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now_iso(),
             "tools": [
                 name for name, info in tool_updates.get("tools", {}).items()
                 if info.get("update_available")

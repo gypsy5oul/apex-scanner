@@ -11,6 +11,7 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
 
 from app.config import settings, get_redis_client
+from app.time_utils import now_iso
 MIN_WORKERS = int(os.getenv('MIN_WORKERS', '2'))
 MAX_WORKERS = int(os.getenv('MAX_WORKERS', '10'))
 SCALE_UP_THRESHOLD = int(os.getenv('SCALE_UP_THRESHOLD', '10'))  # Tasks in queue to trigger scale up
@@ -209,7 +210,7 @@ class AutoScaler:
         # Check cooldown period
         if current_time - self.last_scale_time < COOLDOWN_PERIOD:
             return ScalingDecision(
-                timestamp=datetime.now().isoformat(),
+                timestamp=now_iso(),
                 action='no_action',
                 reason='In cooldown period',
                 current_workers=current_workers,
@@ -221,7 +222,7 @@ class AutoScaler:
         if queue_depth > SCALE_UP_THRESHOLD and current_workers < MAX_WORKERS:
             target = min(current_workers + SCALE_UP_STEP, MAX_WORKERS)
             return ScalingDecision(
-                timestamp=datetime.now().isoformat(),
+                timestamp=now_iso(),
                 action='scale_up',
                 reason=f'Queue depth ({queue_depth}) > threshold ({SCALE_UP_THRESHOLD})',
                 current_workers=current_workers,
@@ -233,7 +234,7 @@ class AutoScaler:
         if queue_depth < SCALE_DOWN_THRESHOLD and current_workers > MIN_WORKERS:
             target = max(current_workers - SCALE_DOWN_STEP, MIN_WORKERS)
             return ScalingDecision(
-                timestamp=datetime.now().isoformat(),
+                timestamp=now_iso(),
                 action='scale_down',
                 reason=f'Queue depth ({queue_depth}) < threshold ({SCALE_DOWN_THRESHOLD})',
                 current_workers=current_workers,
@@ -243,7 +244,7 @@ class AutoScaler:
 
         # No action needed
         return ScalingDecision(
-            timestamp=datetime.now().isoformat(),
+            timestamp=now_iso(),
             action='no_action',
             reason='Queue depth within normal range',
             current_workers=current_workers,
@@ -279,7 +280,7 @@ class AutoScaler:
         queue_depth = self.get_total_queue_depth()
 
         metrics = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': now_iso(),
             'queue_depth': queue_depth,
             'worker_count': len(workers),
             'queues': [asdict(q) for q in queue_stats],
@@ -326,7 +327,7 @@ class AutoScaler:
                 # Store current status
                 status = {
                     'running': True,
-                    'last_check': datetime.now().isoformat(),
+                    'last_check': now_iso(),
                     'last_decision': asdict(decision),
                     'queue_depth': decision.queue_depth,
                     'worker_count': decision.current_workers

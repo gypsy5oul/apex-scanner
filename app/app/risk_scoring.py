@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 from app.config import settings, get_redis_client
+from app.time_utils import now_iso
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -460,7 +461,7 @@ class RiskScoringEngine:
 
         result = {
             "scan_id": scan_id,
-            "calculated_at": datetime.now().isoformat(),
+            "calculated_at": now_iso(),
             "overall_risk_score": round(overall_score, 2),
             "overall_risk_level": overall_level,
             "max_vulnerability_score": round(max_score, 2),

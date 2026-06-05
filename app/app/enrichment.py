@@ -10,6 +10,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Tuple
 from app.config import settings, get_redis_client
+from app.time_utils import now_iso
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -156,7 +157,7 @@ class KEVClient:
             pipe.delete(self.CVE_SET_KEY)
             if cve_ids:
                 pipe.sadd(self.CVE_SET_KEY, *cve_ids)
-            pipe.set(self.LAST_UPDATE_KEY, datetime.now().isoformat())
+            pipe.set(self.LAST_UPDATE_KEY, now_iso())
             pipe.execute()
 
             logger.info(
@@ -169,7 +170,7 @@ class KEVClient:
                 "status": "updated",
                 "total_cves": len(cve_ids),
                 "catalog_version": catalog_version,
-                "updated_at": datetime.now().isoformat()
+                "updated_at": now_iso()
             }
 
         except httpx.HTTPError as e:
@@ -477,7 +478,7 @@ class VulnerabilityEnricher:
             "epss_enriched": epss_enriched,
             "kev_matches": kev_matches,
             "high_risk_vulns": high_risk_count,
-            "enriched_at": datetime.now().isoformat()
+            "enriched_at": now_iso()
         }
 
         # Cache enrichment summary if scan_id provided

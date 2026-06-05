@@ -6,13 +6,15 @@ import os
 import json
 import socket
 import traceback
-from celery import Celery, group
+from celery import Celery
 from celery.signals import worker_ready
 from datetime import datetime, timezone
 from typing import List, Dict, Any
 
 from app.config import settings, get_redis_client
+from app.time_utils import now_iso
 from app.scanners.orchestrator import ScannerOrchestrator
+from app.scanner_errors import classify_scanner_errors, summarize_scan_failure
 from app.logging_config import get_logger, configure_logging, LogContext
 from app.metrics import (
     SCANS_IN_PROGRESS, SCANS_COMPLETED, SCAN_DURATION,
@@ -183,7 +185,7 @@ def on_worker_ready(**kwargs):
 
     health = validate_scanner_binaries()
     health["hostname"] = hostname
-    health["checked_at"] = datetime.now().isoformat()
+    health["checked_at"] = now_iso()
 
     # Publish to Redis so the API /health/scanners endpoint can read it
     try:
@@ -540,7 +542,7 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) ->
                             cached_data["scan_id"] = scan_id
                             cached_data["cached_from"] = cached_scan_id
                             cached_data["cache_hit"] = "true"
-                            cached_data["scan_timestamp"] = datetime.now().isoformat()
+                            cached_data["scan_timestamp"] = now_iso()
                             redis_client.hset(scan_id, mapping=cached_data)
                             redis_client.expire(scan_id, settings.SCAN_RESULT_TTL)
 
@@ -574,23 +576,25 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) ->
             scanners_failed = merged_results.get("scanners_failed", {})
 
             if not scanners_used:
-                error_msg = (
-                    f"All scanners failed: "
-                    f"{json.dumps(scanners_failed)}"
-                )
+                friendly_summary = summarize_scan_failure(scanners_failed)
+                friendly_per_scanner = classify_scanner_errors(scanners_failed)
+
+                # Log the FULL error for ops/support; show the short version to users.
                 logger.error(
-                    error_msg,
+                    f"All scanners failed: {friendly_summary}",
                     scan_id=scan_id,
-                    summary=merged_results.get('summary', {})
+                    summary=merged_results.get('summary', {}),
+                    raw_errors=scanners_failed,
                 )
                 redis_client.hset(scan_id, mapping={
                     "status": "failed",
-                    "error": error_msg,
-                    "scanner_errors": json.dumps(scanners_failed),
+                    "error": friendly_summary,
+                    "scanner_errors": json.dumps(friendly_per_scanner),
+                    "scanner_errors_raw": json.dumps(scanners_failed),
                 })
                 SCANS_COMPLETED.labels(status='failure', scanner='all').inc()
                 SCANS_IN_PROGRESS.dec()
-                return {"scan_id": scan_id, "status": "failed", "error": error_msg}
+                return {"scan_id": scan_id, "status": "failed", "error": friendly_summary}
 
             # Determine scan quality — degraded if some scanners failed
             scan_quality = "full" if set(scanners_requested) == set(scanners_used) else "degraded"
@@ -602,6 +606,31 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) ->
                     used=scanners_used,
                     failed=scanners_failed,
                 )
+
+            # Guard against false-negative "0 vulns" scans: if BOTH vulnerability
+            # scanners (Grype + Trivy) failed and no SBOM was produced, the result
+            # is meaningless even though Celery reports the task as completed.
+            # Bail out and mark this scan as failed so users don't see green ✅
+            # on an image we never actually inspected.
+            vuln_scanners_failed = {"grype", "trivy"}.issubset(set(scanners_failed.keys()))
+            sbom_packages = merged_results.get("sbom", {}).get("statistics", {}).get("total_packages", 0)
+            if vuln_scanners_failed and sbom_packages == 0:
+                friendly_summary = summarize_scan_failure(scanners_failed)
+                friendly_per_scanner = classify_scanner_errors(scanners_failed)
+                logger.error(
+                    f"Scan produced no usable data — marking as failed: {friendly_summary}",
+                    scan_id=scan_id,
+                    raw_errors=scanners_failed,
+                )
+                redis_client.hset(scan_id, mapping={
+                    "status": "failed",
+                    "error": friendly_summary,
+                    "scanner_errors": json.dumps(friendly_per_scanner),
+                    "scanner_errors_raw": json.dumps(scanners_failed),
+                })
+                SCANS_COMPLETED.labels(status='failure', scanner='all').inc()
+                SCANS_IN_PROGRESS.dec()
+                return {"scan_id": scan_id, "status": "failed", "error": friendly_summary}
 
             # Generate enhanced HTML report
             html_report, vuln_counts = generate_enhanced_html_report(scan_id, image_name, merged_results)
@@ -670,6 +699,10 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) ->
             # Calculate scan duration
             duration = (datetime.now() - start_time).total_seconds()
 
+            # Translate any per-scanner failure messages to short, user-friendly
+            # text. We keep the raw output in scanner_errors_raw for support.
+            friendly_scanner_errors = classify_scanner_errors(scanners_failed)
+
             # Update Redis with comprehensive results
             redis_result = {
                 "status": "completed",
@@ -718,12 +751,14 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) ->
                 "sbom_report_url": f"{settings.SERVER_HOST}/reports/{scan_id}_sbom.html" if sbom_html_report else "",
                 "sbom_urls": json.dumps(sbom_urls),
 
-                # Scanner metadata
+                # Scanner metadata — store BOTH friendly + raw so the dashboard
+                # can show a short message but support can still see the full trace.
                 "scanners_used": ",".join(scanners_used),
                 "scanners_requested": ",".join(scanners_requested),
-                "scanner_errors": json.dumps(scanners_failed),
+                "scanner_errors": json.dumps(friendly_scanner_errors),
+                "scanner_errors_raw": json.dumps(scanners_failed),
                 "scan_quality": scan_quality,
-                "scan_timestamp": datetime.now().isoformat(),
+                "scan_timestamp": now_iso(),
                 "scan_duration_seconds": duration,
 
                 # EPSS/KEV enrichment data
@@ -802,7 +837,7 @@ def batch_scan_images(
     batch_id: str
 ) -> Dict[str, Any]:
     """
-    Execute batch scanning for multiple images IN PARALLEL using Celery group()
+    Dispatch a batch of scans as independent Celery tasks (fire-and-forget).
 
     Args:
         images: List of Docker images to scan
@@ -816,124 +851,75 @@ def batch_scan_images(
 
     with LogContext(batch_id=batch_id, task="batch_scan"):
         logger.info(
-            "Starting parallel batch scan",
+            "Dispatching batch scan",
             batch_id=batch_id,
-            image_count=len(images)
+            image_count=len(images),
         )
 
-        # Update batch status to processing
-        redis_client.hset(f"batch:{batch_id}", mapping={
-            "status": "processing",
-            "started_at": datetime.now().isoformat()
-        })
+        # Dispatch each scan as an independent Celery task.
+        #
+        # We intentionally do NOT use group(...).get() here — calling .get()
+        # from inside a Celery task raises RuntimeError("Never call
+        # result.get() within a task!") and can deadlock the worker pool
+        # when subtasks land on the same worker that is blocked waiting on
+        # them. Instead we fire-and-forget; GET /scan/batch/{batch_id}
+        # already aggregates per-scan status by reading each scan_id hash
+        # from Redis, so callers see live progress.
+        dispatched: List[str] = []
+        failed_to_dispatch: List[Dict[str, str]] = []
 
-        # Create a group of parallel scan tasks
-        # This runs all scans concurrently instead of sequentially
-        scan_tasks = group(
-            scan_image.s(image_name, scan_id)
-            for image_name, scan_id in zip(images, scan_ids)
-        )
-
-        # Execute all tasks in parallel and wait for results
-        # timeout is per-task timeout * 1.5 to allow for some overhead
-        try:
-            group_result = scan_tasks.apply_async()
-
-            # Wait for all tasks to complete with a reasonable timeout
-            # Each scan can take up to SCAN_TIMEOUT, but they run in parallel
-            # So total time should be closer to single scan time, not N * scan time
-            timeout = settings.SCAN_TIMEOUT * 2  # Allow 2x single scan timeout for entire batch
-
-            task_results = group_result.get(
-                timeout=timeout,
-                propagate=False  # Don't raise exceptions, collect all results
-            )
-        except Exception as e:
-            logger.error(
-                "Batch scan group execution failed",
-                batch_id=batch_id,
-                error=str(e)
-            )
-            # Mark batch as failed
-            redis_client.hset(f"batch:{batch_id}", mapping={
-                "status": "failed",
-                "error": str(e),
-                "completed_at": datetime.now().isoformat()
-            })
-            raise
-
-        # Process results from parallel execution
-        results = []
-        for i, (image_name, scan_id) in enumerate(zip(images, scan_ids)):
+        for image_name, scan_id in zip(images, scan_ids):
             try:
-                task_result = task_results[i] if i < len(task_results) else None
-
-                if task_result is None:
-                    status = "failed"
-                    error = "No result returned"
-                elif isinstance(task_result, Exception):
-                    status = "failed"
-                    error = str(task_result)
-                elif isinstance(task_result, dict):
-                    status = "completed" if task_result.get("status") == "completed" else "failed"
-                    error = task_result.get("error")
-                else:
-                    status = "failed"
-                    error = f"Unexpected result type: {type(task_result)}"
-
-                result_entry = {
-                    "scan_id": scan_id,
-                    "image_name": image_name,
-                    "status": status
-                }
-                if error:
-                    result_entry["error"] = error
-
-                results.append(result_entry)
-
+                scan_image.apply_async(
+                    args=[image_name, scan_id],
+                    queue="batch",
+                    routing_key="batch",
+                )
+                dispatched.append(scan_id)
             except Exception as e:
                 logger.error(
-                    "Error processing batch scan result",
+                    "Failed to dispatch scan in batch",
                     batch_id=batch_id,
                     scan_id=scan_id,
                     image=image_name,
-                    error=str(e)
+                    error=str(e),
                 )
-                results.append({
+                failed_to_dispatch.append({
                     "scan_id": scan_id,
                     "image_name": image_name,
+                    "error": str(e),
+                })
+                # Mark the individual scan hash so the status endpoint
+                # surfaces the dispatch failure instead of "in_progress".
+                redis_client.hset(scan_id, mapping={
                     "status": "failed",
-                    "error": str(e)
+                    "error": f"Failed to enqueue scan: {e}",
+                    "image_name": image_name,
                 })
 
-        # Update batch status
-        completed = sum(1 for r in results if r["status"] == "completed")
-        failed = len(results) - completed
-
-        batch_status = "completed" if completed == len(results) else \
-                       "partial" if completed > 0 else "failed"
-
+        # Update batch metadata. Per-scan progress is tracked by polling
+        # GET /scan/batch/{batch_id} which reads each scan hash directly.
         redis_client.hset(f"batch:{batch_id}", mapping={
-            "status": batch_status,
-            "completed_count": completed,
-            "failed_count": failed,
-            "completed_at": datetime.now().isoformat()
+            "status": "dispatched",
+            "dispatched_count": len(dispatched),
+            "dispatch_failed_count": len(failed_to_dispatch),
+            "dispatched_at": now_iso(),
         })
 
         logger.info(
-            "Parallel batch scan completed",
+            "Batch scan dispatched",
             batch_id=batch_id,
-            completed=completed,
-            failed=failed,
-            status=batch_status
+            dispatched=len(dispatched),
+            dispatch_failed=len(failed_to_dispatch),
         )
 
         return {
             "batch_id": batch_id,
-            "status": batch_status,
-            "completed": completed,
-            "failed": failed,
-            "results": results
+            "status": "dispatched",
+            "dispatched": len(dispatched),
+            "dispatch_failed": len(failed_to_dispatch),
+            "scan_ids": dispatched,
+            "errors": failed_to_dispatch,
         }
 
 
@@ -977,7 +963,7 @@ def scan_base_images(self, batch_size: int = 5) -> Dict[str, Any]:
             thread_redis.hset(scan_id, mapping={
                 "status": "in_progress",
                 "image_name": image_name,
-                "created_at": datetime.now().isoformat(),
+                "created_at": now_iso(),
                 "scan_type": "base_image"
             })
             thread_redis.expire(scan_id, settings.SCAN_RESULT_TTL)
@@ -1164,7 +1150,7 @@ def update_vulnerability_databases(self) -> Dict[str, Any]:
         logger.error(f"Vulnerability database update failed: {e}")
         return {
             "error": str(e),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": now_iso()
         }
 
 
@@ -1203,14 +1189,14 @@ def check_system_status(self) -> Dict[str, Any]:
         return {
             "tool_versions": tool_status,
             "db_status": db_status,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": now_iso()
         }
 
     except Exception as e:
         logger.error(f"System status check failed: {e}")
         return {
             "error": str(e),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": now_iso()
         }
 
 
@@ -1247,7 +1233,7 @@ def update_kev_database(self) -> Dict[str, Any]:
         return {
             "status": "error",
             "error": str(e),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": now_iso()
         }
 
 
@@ -1300,7 +1286,7 @@ def cleanup_old_scan_artifacts(self) -> Dict[str, Any]:
         "status": "completed",
         "retention_days": retention_days,
         "deleted": deleted,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": now_iso()
     }
 
 

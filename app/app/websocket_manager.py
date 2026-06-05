@@ -12,6 +12,7 @@ from dataclasses import dataclass, asdict
 import logging
 
 from app.config import settings
+from app.time_utils import now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +167,7 @@ class ScanProgressTracker:
             steps_completed=self.SCAN_STEPS[:self.current_step_index],
             steps_remaining=self.SCAN_STEPS[self.current_step_index + 1:],
             message=message,
-            timestamp=datetime.now().isoformat(),
+            timestamp=now_iso(),
             details=details
         )
 
@@ -278,7 +279,7 @@ def publish_progress_sync(
             "step": step,
             "message": message,
             "progress": progress,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now_iso(),
             "details": details or {}
         }
         r.publish("scan_progress", json.dumps(update))

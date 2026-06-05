@@ -9,6 +9,7 @@ from typing import Dict, Any, List, Optional
 from collections import defaultdict
 
 from app.config import settings, get_redis_client
+from app.time_utils import now_iso
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -42,7 +43,7 @@ class TrendAnalyzer:
         metrics: Dict[str, Any]
     ) -> None:
         """Record scan metrics for trend analysis"""
-        timestamp = datetime.now().isoformat()
+        timestamp = now_iso()
         date_key = datetime.now().strftime("%Y-%m-%d")
 
         # Normalize image name for key
@@ -114,7 +115,7 @@ class TrendAnalyzer:
             }
 
         # Filter by date range
-        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff_date = (datetime.now().astimezone() - timedelta(days=days)).isoformat()
         filtered_trends = [t for t in trends if t["timestamp"] >= cutoff_date]
 
         # Calculate trend direction
@@ -336,7 +337,7 @@ class TrendAnalyzer:
         if not image_keys:
             return {"total_scans": 0}
 
-        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff_date = (datetime.now().astimezone() - timedelta(days=days)).isoformat()
 
         # Pipeline: Get entries from all keys in batch
         pipe = self.redis.pipeline()

@@ -10,6 +10,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from app.config import settings, get_redis_client
+from app.time_utils import now_iso
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -136,7 +137,7 @@ class RemediationEngine:
 
         result = {
             "scan_id": scan_id,
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": now_iso(),
             "summary": summary,
             "actions": actions,
             "remediation_script": script,
@@ -466,7 +467,7 @@ class RemediationEngine:
         all_commands = []
         all_commands.append("#!/bin/bash")
         all_commands.append("# Auto-generated remediation script")
-        all_commands.append(f"# Generated: {datetime.now().isoformat()}")
+        all_commands.append(f"# Generated: {now_iso()}")
         all_commands.append("")
 
         for pkg_type, commands in scripts.items():

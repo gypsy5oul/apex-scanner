@@ -21,6 +21,7 @@ from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
 from app.config import settings, get_redis_client
+from app.time_utils import now_iso
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -194,7 +195,7 @@ class ReportExporter:
         scan_info = [
             ['Image Name:', scan_data.get('image_name', 'Unknown')],
             ['Scan ID:', scan_data.get('scan_id', 'Unknown')],
-            ['Scan Date:', scan_data.get('scan_timestamp', datetime.now().isoformat())],
+            ['Scan Date:', scan_data.get('scan_timestamp', now_iso())],
             ['Base OS:', scan_data.get('base_image_os', 'Unknown')],
             ['Total Packages:', str(scan_data.get('total_packages', 0))],
             ['Scanners Used:', scan_data.get('scanners_used', 'grype, trivy, syft')]
@@ -423,7 +424,7 @@ class ReportExporter:
             self.styles['SubHeader']
         ))
         story.append(Paragraph(
-            f"Scan Date: {scan_data.get('scan_timestamp', datetime.now().isoformat())}",
+            f"Scan Date: {scan_data.get('scan_timestamp', now_iso())}",
             self.styles['BodyTextCustom']
         ))
         story.append(Spacer(1, 20))

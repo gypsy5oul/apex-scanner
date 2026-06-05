@@ -9,6 +9,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 
 from app.config import settings, get_redis_client
+from app.time_utils import now_iso
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -145,7 +146,7 @@ class BaseImageTracker:
             detected_base=detected_base,
             base_image_tag=base_image_tag,
             is_official=is_official,
-            last_updated=datetime.now().isoformat()
+            last_updated=now_iso()
         )
 
     def categorize_vulnerabilities(
@@ -233,7 +234,7 @@ class BaseImageTracker:
             "image_tag": image_tag,
             "full_name": f"{image_name}:{image_tag}",
             "description": description or "",
-            "registered_at": datetime.now().isoformat(),
+            "registered_at": now_iso(),
             "last_scanned": "",
             "scan_count": "0",
             "current_vulns": json.dumps({
@@ -282,7 +283,7 @@ class BaseImageTracker:
 
         if self.redis.exists(base_id):
             self.redis.hset(base_id, mapping={
-                "last_scanned": datetime.now().isoformat(),
+                "last_scanned": now_iso(),
                 "last_scan_id": scan_id,
                 "current_vulns": json.dumps(vulnerabilities)
             })
@@ -291,7 +292,7 @@ class BaseImageTracker:
             # Store historical data
             history_key = f"base_history:{image_name}:{image_tag}"
             history_entry = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": now_iso(),
                 "scan_id": scan_id,
                 "vulns": vulnerabilities
             }

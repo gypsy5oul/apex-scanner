@@ -9,6 +9,7 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
 
 from app.config import settings, get_redis_client
+from app.time_utils import now_iso
 from app.tasks import celery
 
 
@@ -279,7 +280,7 @@ class WorkerMonitor:
         worker_pings = self.ping_workers()
 
         return {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': now_iso(),
             'cluster': {
                 'total_workers': cluster.total_workers,
                 'active_workers': cluster.active_workers,
