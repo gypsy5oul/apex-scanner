@@ -407,31 +407,50 @@ def generate_enhanced_html_report(
         template = env.get_template("enhanced_report_template.html")
         report_file = os.path.join(settings.REPORTS_DIR, f"{scan_id}.html")
 
-        # Prepare vulnerabilities for display
+        # Prepare vulnerabilities for display.
+        #
+        # The report now shows EVERY vulnerability — fixable and not — and the
+        # JavaScript filters in the template let users toggle between subsets
+        # (Fixable / KEV / High EPSS / Critical+High). We sort by risk so the
+        # most urgent items are at the top regardless of the active filter:
+        # KEV-listed first, then high EPSS, then severity, then fixability.
         all_vulns = merged_results.get("vulnerabilities", {}).get("all", [])
 
-        # Filter for fixable vulnerabilities with relevant severities
-        fixable_vulns = [
-            v for v in all_vulns
-            if v.get("fix_available", False) and
-            v.get("severity", "Unknown").upper() in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
-        ]
+        severity_order = {
+            "CRITICAL": 0, "Critical": 0,
+            "HIGH": 1, "High": 1,
+            "MEDIUM": 2, "Medium": 2,
+            "LOW": 3, "Low": 3,
+            "NEGLIGIBLE": 4, "Negligible": 4,
+            "UNKNOWN": 5, "Unknown": 5,
+        }
 
-        # Sort by severity and confidence
-        severity_order = {"CRITICAL": 0, "Critical": 0, "HIGH": 1, "High": 1,
-                         "MEDIUM": 2, "Medium": 2, "LOW": 3, "Low": 3}
-        confidence_order = {"high": 0, "medium": 1, "low": 2}
+        def _risk_sort_key(v):
+            sev = severity_order.get(v.get("severity", "Unknown"), 99)
+            kev = 0 if v.get("in_kev") or v.get("kev_match") else 1
+            epss = -float(v.get("epss_score") or 0)  # higher EPSS first
+            fix = 0 if v.get("fix_available") else 1
+            return (kev, sev, epss, fix)
 
-        fixable_vulns.sort(
-            key=lambda x: (
-                severity_order.get(x.get("severity", "Unknown"), 999),
-                confidence_order.get(x.get("confidence", "low"), 999)
-            )
-        )
+        all_vulns_sorted = sorted(all_vulns, key=_risk_sort_key)
+
+        # Subset used by the "Fixable only" toggle (template already has all of them
+        # via all_vulnerabilities; we keep this for backwards-compat with the JSON).
+        fixable_vulns = [v for v in all_vulns_sorted if v.get("fix_available")]
 
         # Calculate statistics
         severity_counts = merged_results.get("severity_counts", {})
         fixable_counts = merged_results.get("fixable_counts", {})
+
+        # Risk-intel rollup (used by the summary cards at the top of the report)
+        kev_count = sum(1 for v in all_vulns if v.get("in_kev") or v.get("kev_match"))
+        high_epss_count = sum(1 for v in all_vulns if float(v.get("epss_score") or 0) >= 0.5)
+        risk_priority_counts = {
+            "critical": sum(1 for v in all_vulns if v.get("risk_priority") == "critical"),
+            "high":     sum(1 for v in all_vulns if v.get("risk_priority") == "high"),
+            "medium":   sum(1 for v in all_vulns if v.get("risk_priority") == "medium"),
+            "low":      sum(1 for v in all_vulns if v.get("risk_priority") == "low"),
+        }
 
         # Record vulnerability metrics
         for scanner in merged_results.get("scanners_used", []):
@@ -445,16 +464,23 @@ def generate_enhanced_html_report(
         sbom_stats = merged_results.get("sbom", {}).get("statistics", {})
 
         # Generate report context
+        # The primary "vulnerabilities" list is now the FULL list, sorted by
+        # risk. The client-side JS filters (defined in the template) toggle
+        # visible rows; nothing is hidden server-side.
         report_context = {
             "image_name": image_name,
             "scan_id": scan_id,
-            "scan_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
-            "vulnerabilities": fixable_vulns,
-            "all_vulnerabilities": all_vulns,
+            "scan_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "vulnerabilities": all_vulns_sorted,
+            "all_vulnerabilities": all_vulns_sorted,
             "severity_counts": severity_counts,
             "fixable_counts": fixable_counts,
-            "total_vulnerabilities": len(all_vulns),
+            "total_vulnerabilities": len(all_vulns_sorted),
             "total_fixable": len(fixable_vulns),
+            "total_non_fixable": len(all_vulns_sorted) - len(fixable_vulns),
+            "kev_count": kev_count,
+            "high_epss_count": high_epss_count,
+            "risk_priority_counts": risk_priority_counts,
             "secrets": secrets,
             "total_secrets": merged_results.get("total_secrets", 0),
             "scanners_used": merged_results.get("scanners_used", []),
@@ -466,8 +492,8 @@ def generate_enhanced_html_report(
                 "status": "Failed" if (severity_counts.get("Critical", 0) + severity_counts.get("High", 0)) > 0 else "Passed",
                 "total_packages": sbom_stats.get("total_packages", 0),
                 "scanners": ", ".join(merged_results.get("scanners_used", [])),
-                "multi_scanner_validation": len(merged_results.get("scanners_used", [])) > 1
-            }
+                "multi_scanner_validation": len(merged_results.get("scanners_used", [])) > 1,
+            },
         }
 
         # Render and save report
@@ -632,7 +658,15 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) ->
                 SCANS_IN_PROGRESS.dec()
                 return {"scan_id": scan_id, "status": "failed", "error": friendly_summary}
 
-            # Generate enhanced HTML report
+            # Enrich vulnerabilities FIRST (EPSS scores, KEV status, risk_priority)
+            # so the HTML report can render these fields. Enrichment is fast
+            # (~1s for 5k vulns) and the report is the primary user surface.
+            pre_enrich_vulns = merged_results.get("vulnerabilities", {}).get("all", [])
+            enriched_vulns, enrichment_summary = enrich_scan_results(pre_enrich_vulns, scan_id)
+            merged_results["vulnerabilities"]["all"] = enriched_vulns
+            merged_results["enrichment_summary"] = enrichment_summary
+
+            # Generate enhanced HTML report (now has access to EPSS/KEV/risk_priority)
             html_report, vuln_counts = generate_enhanced_html_report(scan_id, image_name, merged_results)
 
             if not html_report:
@@ -676,13 +710,8 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) ->
                     error=str(e)
                 )
 
-            # Store vulnerability details for comparison/search
-            all_vulns = merged_results.get("vulnerabilities", {}).get("all", [])
-
-            # Enrich vulnerabilities with EPSS scores and KEV status
-            enriched_vulns, enrichment_summary = enrich_scan_results(all_vulns, scan_id)
-
-            # Store enriched vulnerabilities
+            # Store enriched vulnerabilities (already enriched earlier, before
+            # report generation, so the HTML report could render EPSS/KEV).
             redis_client.set(
                 f"vulns:{scan_id}",
                 json.dumps(enriched_vulns),

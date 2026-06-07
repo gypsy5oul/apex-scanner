@@ -300,14 +300,72 @@
         </div>
         {% endif %}
 
+        <!-- Risk Intelligence Summary -->
+        <div class="table-section">
+            <h4><i class="fas fa-radar"></i> Risk Intelligence</h4>
+            <div class="row mt-3 g-3">
+                <div class="col-md-3 col-sm-6">
+                    <div class="stats-card" style="border-left: 4px solid #dc3545;">
+                        <div style="font-size: 0.95rem; color: #6c757d;">CISA KEV (Actively Exploited)</div>
+                        <div style="font-size: 2.5rem; font-weight: 700; color: #dc3545;">{{ kev_count }}</div>
+                        <small class="text-muted">vulnerabilities seen in active attacks</small>
+                    </div>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <div class="stats-card" style="border-left: 4px solid #fd7e14;">
+                        <div style="font-size: 0.95rem; color: #6c757d;">High EPSS (≥50%)</div>
+                        <div style="font-size: 2.5rem; font-weight: 700; color: #fd7e14;">{{ high_epss_count }}</div>
+                        <small class="text-muted">≥50% predicted exploit probability</small>
+                    </div>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <div class="stats-card" style="border-left: 4px solid #198754;">
+                        <div style="font-size: 0.95rem; color: #6c757d;">Fixable</div>
+                        <div style="font-size: 2.5rem; font-weight: 700; color: #198754;">{{ total_fixable }}</div>
+                        <small class="text-muted">have a patched version available</small>
+                    </div>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <div class="stats-card" style="border-left: 4px solid #6c757d;">
+                        <div style="font-size: 0.95rem; color: #6c757d;">Not Fixable</div>
+                        <div style="font-size: 2.5rem; font-weight: 700; color: #6c757d;">{{ total_non_fixable }}</div>
+                        <small class="text-muted">no upstream fix yet — track or VEX</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Vulnerabilities Table -->
         <div class="table-section">
-            <h4><i class="fas fa-bug"></i> Fixable Vulnerabilities ({{ total_fixable }})</h4>
+            <h4><i class="fas fa-bug"></i> Vulnerabilities ({{ total_vulnerabilities }})</h4>
+
+            <!-- Filter toggle bar -->
+            <div class="btn-group flex-wrap my-3" role="group" aria-label="Vulnerability filters" id="vulnFilters">
+                <button type="button" class="btn btn-outline-dark active" data-filter="all">
+                    <i class="fas fa-list"></i> All ({{ total_vulnerabilities }})
+                </button>
+                <button type="button" class="btn btn-outline-success" data-filter="fixable">
+                    <i class="fas fa-wrench"></i> Fixable only ({{ total_fixable }})
+                </button>
+                <button type="button" class="btn btn-outline-danger" data-filter="kev">
+                    <i class="fas fa-fire"></i> KEV only ({{ kev_count }})
+                </button>
+                <button type="button" class="btn btn-outline-warning" data-filter="high-epss">
+                    <i class="fas fa-bolt"></i> High EPSS ≥50% ({{ high_epss_count }})
+                </button>
+                <button type="button" class="btn btn-outline-primary" data-filter="critical-high">
+                    <i class="fas fa-exclamation-triangle"></i> Critical+High ({{ (severity_counts.Critical or 0) + (severity_counts.High or 0) }})
+                </button>
+            </div>
+
             <table id="vulnTable" class="table table-hover">
                 <thead>
                     <tr>
                         <th>CVE ID</th>
                         <th>Severity</th>
+                        <th>CVSS</th>
+                        <th>EPSS</th>
+                        <th>KEV</th>
                         <th>Package</th>
                         <th>Version</th>
                         <th>Fix Version</th>
@@ -318,12 +376,57 @@
                 </thead>
                 <tbody>
                     {% for vuln in vulnerabilities %}
-                    <tr class="confidence-{{ vuln.confidence|default('medium') }}">
-                        <td><strong>{{ vuln.id }}</strong></td>
+                    {# Pre-compute the row's filter flags so the JS filter is O(1) per row. #}
+                    {% set is_fixable = vuln.fix_available %}
+                    {% set is_kev = vuln.in_kev or vuln.kev_match %}
+                    {% set epss_val = (vuln.epss_score or 0)|float %}
+                    {% set is_high_epss = epss_val >= 0.5 %}
+                    {% set sev_upper = (vuln.severity or 'Unknown')|upper %}
+                    {% set is_crit_high = sev_upper in ['CRITICAL', 'HIGH'] %}
+                    <tr class="confidence-{{ vuln.confidence|default('medium') }}"
+                        data-fixable="{{ '1' if is_fixable else '0' }}"
+                        data-kev="{{ '1' if is_kev else '0' }}"
+                        data-high-epss="{{ '1' if is_high_epss else '0' }}"
+                        data-crit-high="{{ '1' if is_crit_high else '0' }}">
+                        <td>
+                            <strong>{{ vuln.id }}</strong>
+                            {% if vuln.risk_priority == 'critical' %}
+                            <br><small class="badge bg-danger">⚠ TOP PRIORITY</small>
+                            {% endif %}
+                        </td>
                         <td>
                             <span class="vuln-badge badge-{{ vuln.severity|lower }}">
                                 {{ vuln.severity|upper }}
                             </span>
+                        </td>
+                        <td>
+                            {% if vuln.cvss_score %}
+                                <strong>{{ '%.1f'|format(vuln.cvss_score|float) }}</strong>
+                            {% else %}
+                                <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if vuln.epss_score is not none and epss_val > 0 %}
+                                {% set pct = (epss_val * 100)|round(1) %}
+                                <span class="badge {% if epss_val >= 0.5 %}bg-warning text-dark{% elif epss_val >= 0.1 %}bg-info text-dark{% else %}bg-secondary{% endif %}">
+                                    {{ pct }}%
+                                </span>
+                                {% if vuln.epss_percentile %}
+                                <br><small class="text-muted">P{{ (vuln.epss_percentile * 100)|round(0)|int }}</small>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if is_kev %}
+                                <span class="badge bg-danger" title="Listed in CISA Known Exploited Vulnerabilities">
+                                    <i class="fas fa-fire"></i> KEV
+                                </span>
+                            {% else %}
+                                <span class="text-muted">—</span>
+                            {% endif %}
                         </td>
                         <td>{{ vuln.package_name }}</td>
                         <td><code>{{ vuln.package_version }}</code></td>
@@ -331,7 +434,7 @@
                             {% if vuln.fix_versions %}
                                 <code>{{ vuln.fix_versions|join(', ') }}</code>
                             {% else %}
-                                N/A
+                                <span class="badge bg-secondary">No fix</span>
                             {% endif %}
                         </td>
                         <td>
@@ -378,15 +481,49 @@
 
     <script>
         $(document).ready(function() {
-            $('#vulnTable').DataTable({
+            // Default sort: KEV first (column 4), then severity, then EPSS desc.
+            const table = $('#vulnTable').DataTable({
                 dom: 'Bfrtip',
                 buttons: ['copy', 'csv', 'excel'],
                 pageLength: 25,
-                order: [[1, 'asc'], [6, 'desc']],  // Sort by severity, then confidence
+                order: [[4, 'desc'], [1, 'asc'], [3, 'desc']],
                 columnDefs: [
-                    { responsivePriority: 1, targets: [0, 1, 2] }
-                ]
+                    { responsivePriority: 1, targets: [0, 1, 4] },
+                ],
             });
+
+            // Filter toggle bar — mirrors what the buttons show. The row's
+            // data-* flags are pre-computed by Jinja so this is O(1) per row.
+            // Active filter is persisted in the URL hash so a refreshed page
+            // keeps the user's view (handy for sharing report links).
+            let activeFilter = (location.hash || '').replace('#', '') || 'all';
+
+            $.fn.dataTable.ext.search.push(function(settings, _data, rowIdx) {
+                if (settings.nTable.id !== 'vulnTable') return true;
+                if (activeFilter === 'all') return true;
+                const row = settings.aoData[rowIdx].nTr;
+                const attr = {
+                    fixable:        'data-fixable',
+                    kev:            'data-kev',
+                    'high-epss':    'data-high-epss',
+                    'critical-high':'data-crit-high',
+                }[activeFilter];
+                return attr ? row.getAttribute(attr) === '1' : true;
+            });
+
+            function applyFilter(f) {
+                activeFilter = f;
+                history.replaceState(null, '', f === 'all' ? location.pathname : '#' + f);
+                $('#vulnFilters .btn').removeClass('active');
+                $('#vulnFilters .btn[data-filter="' + f + '"]').addClass('active');
+                table.draw();
+            }
+
+            $('#vulnFilters .btn').on('click', function() {
+                applyFilter($(this).attr('data-filter'));
+            });
+
+            if (activeFilter !== 'all') applyFilter(activeFilter);
         });
     </script>
 </body>
