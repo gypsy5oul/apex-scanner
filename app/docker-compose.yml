@@ -97,6 +97,10 @@ services:
       - ${DOCKER_CONFIG_PATH:-./scripts/empty-docker-config.json}:/home/scanner/.docker/config.json:ro
     restart: unless-stopped
     deploy:
+      # Scale horizontally for interactive (high-priority) scan capacity.
+      # 3 replicas × concurrency=8 = 24 parallel high-priority slots.
+      # Override with HIGH_WORKER_REPLICAS=N in .env if needed.
+      replicas: ${HIGH_WORKER_REPLICAS:-3}
       resources:
         limits:
           cpus: '4'
