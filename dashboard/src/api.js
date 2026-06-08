@@ -118,6 +118,12 @@ export const getBaseImageDetails = (imageName, tag) =>
 // CVSS Enrichment
 export const getCvssEnriched = (scanId) => apiV2.get(`/scan/${scanId}/cvss`);
 
+// License Compliance — counts + violations from the SBOM, populated when the
+// scan ran the license_compliance evaluator. Returns 404 if the scan
+// pre-dates the feature.
+export const getLicenseCompliance = (scanId) =>
+  apiV2.get(`/scan/${scanId}/licenses`);
+
 // Trends
 export const getImageTrends = (imageName, days = 30) =>
   apiV2.get(`/trends/image/${encodeURIComponent(imageName)}`, { params: { days } });

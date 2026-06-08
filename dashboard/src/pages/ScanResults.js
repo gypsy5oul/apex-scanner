@@ -40,6 +40,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import GppMaybeIcon from '@mui/icons-material/GppMaybe';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
+import GavelIcon from '@mui/icons-material/Gavel';
 import {
   getScanResult,
   getDependencyGraph,
@@ -50,6 +51,7 @@ import {
   exportExecutivePdf,
   getEnrichedVulnerabilities,
   getKevMatches,
+  getLicenseCompliance,
 } from '../api';
 import SeverityChip from '../components/SeverityChip';
 import { VulnerabilityDoughnut } from '../components/VulnerabilityChart';
@@ -110,11 +112,13 @@ function ScanResults() {
   const [riskScore, setRiskScore] = useState(null);
   const [enrichedData, setEnrichedData] = useState(null);
   const [kevMatches, setKevMatches] = useState(null);
+  const [licenseCompliance, setLicenseCompliance] = useState(null);
   const [featuresLoading, setFeaturesLoading] = useState({
     dependency: false,
     remediation: false,
     risk: false,
     enrichment: false,
+    licenses: false,
   });
 
   const fetchEnterpriseFeatures = async () => {
@@ -168,6 +172,20 @@ function ScanResults() {
       console.error('Failed to fetch enrichment data:', err);
     } finally {
       setFeaturesLoading(prev => ({ ...prev, enrichment: false }));
+    }
+
+    // Fetch license compliance (returns 404 for scans that pre-date the feature)
+    setFeaturesLoading(prev => ({ ...prev, licenses: true }));
+    try {
+      const lcRes = await getLicenseCompliance(scanId);
+      setLicenseCompliance(lcRes.data);
+    } catch (err) {
+      // Silently absent for old scans — log to console only.
+      if (err?.response?.status !== 404) {
+        console.error('Failed to fetch license compliance:', err);
+      }
+    } finally {
+      setFeaturesLoading(prev => ({ ...prev, licenses: false }));
     }
   };
 
@@ -627,6 +645,24 @@ function ScanResults() {
                 <Tab icon={<BuildIcon />} label="Remediation" iconPosition="start" />
                 <Tab icon={<AccountTreeIcon />} label="Dependencies" iconPosition="start" />
                 <Tab icon={<SmartToyIcon />} label="AI Triage" iconPosition="start" />
+                <Tab
+                  icon={<GavelIcon />}
+                  label={
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      License Compliance
+                      {licenseCompliance?.status === 'fail' && (
+                        <Chip size="small" label="FAIL" color="error" />
+                      )}
+                      {licenseCompliance?.status === 'warn' && (
+                        <Chip size="small" label="WARN" color="warning" />
+                      )}
+                      {licenseCompliance?.status === 'pass' && (
+                        <Chip size="small" label="PASS" color="success" />
+                      )}
+                    </Box>
+                  }
+                  iconPosition="start"
+                />
               </Tabs>
 
               <Box sx={{ p: 3 }}>
@@ -1169,6 +1205,144 @@ function ScanResults() {
                 {/* AI Triage Tab */}
                 {activeTab === 4 && (
                   <AITriagePanel scanId={scanId} />
+                )}
+
+                {/* License Compliance Tab — shows the same data as the HTML
+                    report's License Compliance section, fetched from
+                    /api/v2/scan/{id}/licenses. Older scans return 404 and
+                    we render an empty state instead of an error. */}
+                {activeTab === 5 && (
+                  <Box>
+                    {featuresLoading.licenses ? (
+                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                        <CircularProgress />
+                      </Box>
+                    ) : licenseCompliance ? (
+                      <>
+                        {/* Status alert at the top */}
+                        {(() => {
+                          const status = licenseCompliance.status;
+                          const sev = licenseCompliance.severity_counts || {};
+                          const counts = licenseCompliance.counts || {};
+                          const totalPkgs = licenseCompliance.total_packages || 0;
+                          const distinct = licenseCompliance.distinct_licenses || 0;
+                          const violations = licenseCompliance.violations || [];
+
+                          const alertProps =
+                            status === 'fail' ? { severity: 'error',   title: 'Policy Violations',  } :
+                            status === 'warn' ? { severity: 'warning', title: 'Review Required',    } :
+                                                { severity: 'success', title: 'No Policy Issues',   };
+
+                          const summaryLine =
+                            status === 'fail'
+                              ? `${sev.fail || 0} package(s) violate policy${sev.warn ? `, ${sev.warn} need review` : ''} — restricted licenses (AGPL / SSPL) found.`
+                              : status === 'warn'
+                              ? `${sev.warn || 0} package(s) need review — GPL / source-available / proprietary licenses present.`
+                              : `No policy issues. ${totalPkgs} packages scanned, ${distinct} distinct licenses found.`;
+
+                          return (
+                            <>
+                              <Alert severity={alertProps.severity} sx={{ mb: 3 }}>
+                                <strong>{alertProps.title}:</strong> {summaryLine}
+                              </Alert>
+
+                              <Typography variant="h6" gutterBottom>License Categories</Typography>
+                              <Grid container spacing={2} sx={{ mb: 3 }}>
+                                {[
+                                  { key: 'network_copyleft', label: 'Network Copyleft', subtitle: 'AGPL / SSPL', color: '#dc3545' },
+                                  { key: 'source_available', label: 'Source-Available', subtitle: 'BSL / Elastic / Commons', color: '#fd7e14' },
+                                  { key: 'strong_copyleft',  label: 'Strong Copyleft',  subtitle: 'GPL / EPL / OSL',     color: '#fd7e14' },
+                                  { key: 'proprietary',      label: 'Proprietary',      subtitle: 'Commercial / closed',  color: '#fd7e14' },
+                                  { key: 'weak_copyleft',    label: 'Weak Copyleft',    subtitle: 'LGPL / MPL / CDDL',    color: '#ffc107' },
+                                  { key: 'unknown',          label: 'Unknown / Unparsed', subtitle: 'Review needed',     color: '#6c757d' },
+                                  { key: 'permissive',       label: 'Permissive',       subtitle: 'MIT / BSD / Apache',  color: '#198754' },
+                                ].filter(c => (counts[c.key] || 0) > 0 || c.key === 'permissive').map(c => (
+                                  <Grid item xs={6} sm={4} md={3} key={c.key}>
+                                    <Card sx={{ borderLeft: `4px solid ${c.color}` }}>
+                                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                                        <Typography variant="caption" color="text.secondary">{c.label}</Typography>
+                                        <Typography variant="h4" sx={{ color: c.color, fontWeight: 700 }}>
+                                          {counts[c.key] || 0}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary">{c.subtitle}</Typography>
+                                      </CardContent>
+                                    </Card>
+                                  </Grid>
+                                ))}
+                              </Grid>
+
+                              {violations.length > 0 ? (
+                                <>
+                                  <Typography variant="h6" gutterBottom>
+                                    Packages Requiring Review ({violations.length})
+                                  </Typography>
+                                  <TableContainer component={Paper} variant="outlined">
+                                    <Table size="small">
+                                      <TableHead>
+                                        <TableRow>
+                                          <TableCell>Severity</TableCell>
+                                          <TableCell>Package</TableCell>
+                                          <TableCell>Version</TableCell>
+                                          <TableCell>Type</TableCell>
+                                          <TableCell>Category</TableCell>
+                                          <TableCell>License(s)</TableCell>
+                                        </TableRow>
+                                      </TableHead>
+                                      <TableBody>
+                                        {violations.slice(0, 200).map((v, i) => (
+                                          <TableRow key={i}>
+                                            <TableCell>
+                                              <Chip
+                                                size="small"
+                                                label={(v.severity || '').toUpperCase()}
+                                                color={v.severity === 'fail' ? 'error' : v.severity === 'warn' ? 'warning' : 'default'}
+                                              />
+                                            </TableCell>
+                                            <TableCell><strong>{v.name}</strong></TableCell>
+                                            <TableCell><code>{v.version}</code></TableCell>
+                                            <TableCell>
+                                              <Typography variant="caption" color="text.secondary">{v.type}</Typography>
+                                            </TableCell>
+                                            <TableCell><code>{v.category}</code></TableCell>
+                                            <TableCell>
+                                              {(v.licenses || []).map((lic, j) => (
+                                                <Chip
+                                                  key={j}
+                                                  size="small"
+                                                  label={lic}
+                                                  variant="outlined"
+                                                  sx={{ mr: 0.5, mb: 0.5, fontSize: '0.7rem' }}
+                                                />
+                                              ))}
+                                            </TableCell>
+                                          </TableRow>
+                                        ))}
+                                      </TableBody>
+                                    </Table>
+                                  </TableContainer>
+                                  {violations.length > 200 && (
+                                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                                      Showing first 200 of {violations.length} — full list via{' '}
+                                      <code>GET /api/v2/scan/{scanId}/licenses</code>
+                                    </Typography>
+                                  )}
+                                </>
+                              ) : (
+                                <Alert severity="success">
+                                  No license policy violations. {totalPkgs} packages analyzed, {distinct} distinct licenses found.
+                                </Alert>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </>
+                    ) : (
+                      <Alert severity="info">
+                        License compliance data is not available for this scan. It is generated
+                        automatically for new scans. Re-run the scan to populate this tab.
+                      </Alert>
+                    )}
+                  </Box>
                 )}
               </Box>
             </Paper>
