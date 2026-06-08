@@ -172,6 +172,12 @@
 
             /* Keep severity / KEV badges colored when printed. */
             .vuln-badge, .badge { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+            /* Force the License Compliance details to be expanded in the
+               PDF — the user can't click "View Details" on a static
+               document, and a compliance audit should see the full table. */
+            #licenseDetails.collapse { display: block !important; }
+            #licenseDetails.collapse:not(.show) { display: block !important; }
         }
         .print-only { display: none; }
     </style>
@@ -287,14 +293,43 @@
         </div>
         {% endif %}
 
-        <!-- License Compliance -->
+        <!-- License Compliance — compact alert that opens a collapsible
+             panel. Keeps the main report uncluttered; legal/compliance
+             folks click through when they need the detail. -->
         {% if license_compliance %}
         {% set lc = license_compliance %}
+        {% set lc_alert_class = {'fail':'alert-danger','warn':'alert-warning','pass':'alert-success'}.get(lc.status,'alert-secondary') %}
         {% set lc_status_color = {'fail':'#dc3545','warn':'#fd7e14','pass':'#198754'}.get(lc.status,'#6c757d') %}
         {% set lc_status_label = {'fail':'Policy Violations','warn':'Review Required','pass':'No Issues'}.get(lc.status,'Unknown') %}
+        {% set lc_icon = {'fail':'fa-exclamation-circle','warn':'fa-exclamation-triangle','pass':'fa-check-circle'}.get(lc.status,'fa-info-circle') %}
+
+        <div class="alert {{ lc_alert_class }} d-flex align-items-center justify-content-between flex-wrap"
+             style="margin-bottom: 2rem; border-radius: 0.75rem;">
+            <div>
+                <i class="fas {{ lc_icon }}"></i>
+                <strong>License Compliance:</strong>
+                {% if lc.status == 'fail' %}
+                    {{ lc.severity_counts.fail }} package{{ '' if lc.severity_counts.fail == 1 else 's' }} violate policy
+                    {% if lc.severity_counts.warn %}, {{ lc.severity_counts.warn }} need review{% endif %}
+                    — restricted licenses found (AGPL / SSPL).
+                {% elif lc.status == 'warn' %}
+                    {{ lc.severity_counts.warn }} package{{ '' if lc.severity_counts.warn == 1 else 's' }} need review
+                    — GPL / source-available / proprietary licenses present.
+                {% else %}
+                    No policy issues. {{ lc.total_packages }} packages scanned, {{ lc.distinct_licenses }} distinct licenses.
+                {% endif %}
+            </div>
+            <button class="btn btn-sm btn-light print-hide" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#licenseDetails"
+                    aria-expanded="false" aria-controls="licenseDetails">
+                <i class="fas fa-balance-scale"></i> View License Details
+            </button>
+        </div>
+
+        <div class="collapse" id="licenseDetails">
         <div class="table-section">
             <h4>
-                <i class="fas fa-balance-scale"></i> License Compliance
+                <i class="fas fa-balance-scale"></i> License Compliance — Full Breakdown
                 <span class="badge ms-2" style="background: {{ lc_status_color }}; color: white;">
                     {{ lc_status_label }}
                 </span>
@@ -415,6 +450,7 @@
             </div>
             {% endif %}
         </div>
+        </div>  {# end #licenseDetails collapse #}
         {% endif %}
 
         <!-- Secrets Table -->
@@ -689,10 +725,20 @@
                 $('#printFilterName').text(FILTER_LABELS[activeFilter] || activeFilter);
                 const prevLen = table.page.len();
                 table.page.len(-1).draw(false);  // show all rows that pass the filter
+                // Expand the License Compliance details so they're in the PDF.
+                // Track whether it was open before so we can restore.
+                const licenseDetails = document.getElementById('licenseDetails');
+                const licenseWasOpen = licenseDetails && licenseDetails.classList.contains('show');
+                if (licenseDetails && !licenseWasOpen) {
+                    licenseDetails.classList.add('show');
+                }
                 // afterprint is more reliable than a setTimeout — fires when the
                 // user closes the print dialog whether they saved or cancelled.
                 const restore = function () {
                     table.page.len(prevLen).draw(false);
+                    if (licenseDetails && !licenseWasOpen) {
+                        licenseDetails.classList.remove('show');
+                    }
                     window.removeEventListener('afterprint', restore);
                 };
                 window.addEventListener('afterprint', restore);
