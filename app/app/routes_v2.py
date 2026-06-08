@@ -649,6 +649,32 @@ async def get_cvss_enriched(
     }
 
 
+@router_v2.get(
+    "/scan/{scan_id}/licenses",
+    summary="Get License Compliance Result",
+    description=(
+        "Returns the license-compliance evaluation for a scan: per-category "
+        "package counts, policy status (pass/warn/fail), and the full list "
+        "of packages whose licenses trigger a warning or failure under the "
+        "default policy."
+    ),
+    tags=["compliance"],
+)
+async def get_license_compliance(
+    scan_id: str = Path(..., description="Scan ID"),
+    _user: TokenData = Depends(get_current_user),
+):
+    """Get license compliance result for a scan."""
+    redis_client = get_redis_client()
+    raw = redis_client.get(f"licenses:{scan_id}")
+    if not raw:
+        raise HTTPException(
+            status_code=404,
+            detail="License compliance data not found for this scan",
+        )
+    return {"scan_id": scan_id, **json.loads(raw)}
+
+
 # ============== Trends Endpoints ==============
 
 @router_v2.get(

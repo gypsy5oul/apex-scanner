@@ -15,6 +15,7 @@ from app.config import settings, get_redis_client
 from app.time_utils import now_iso
 from app.scanners.orchestrator import ScannerOrchestrator
 from app.scanner_errors import classify_scanner_errors, summarize_scan_failure
+from app.license_compliance import evaluate as evaluate_licenses, to_dict as licenses_to_dict
 from app.logging_config import get_logger, configure_logging, LogContext
 from app.metrics import (
     SCANS_IN_PROGRESS, SCANS_COMPLETED, SCAN_DURATION,
@@ -219,6 +220,48 @@ def on_worker_ready(**kwargs):
             "One or more scanners failed preflight. "
             "Scans may return degraded results."
         )
+
+
+def _extract_packages_from_sbom(sbom_data: dict) -> list:
+    """Return a list of {name, version, type, language, licenses} dicts from a
+    Syft SBOM, deduplicated by name:version:type. Same shape the SBOM HTML
+    template consumes — kept in sync with that template's extraction logic.
+    """
+    artifacts = sbom_data.get("artifacts", [])
+    packages = []
+    seen = {}
+    for artifact in artifacts:
+        licenses = []
+        for lic in artifact.get("licenses", []):
+            if isinstance(lic, str):
+                licenses.append(lic)
+            elif isinstance(lic, dict):
+                # Syft sometimes stores SPDX expressions in `spdxExpression`
+                # and Fedora-style strings in `value`. Prefer SPDX when both.
+                licenses.append(
+                    lic.get("spdxExpression") or lic.get("value") or "Unknown"
+                )
+
+        name = artifact.get("name", "Unknown")
+        version = artifact.get("version", "Unknown")
+        ptype = artifact.get("type", "Unknown")
+        key = f"{name}:{version}:{ptype}"
+
+        if key in seen:
+            for lic in licenses:
+                if lic not in packages[seen[key]]["licenses"]:
+                    packages[seen[key]]["licenses"].append(lic)
+            continue
+
+        seen[key] = len(packages)
+        packages.append({
+            "name": name,
+            "version": version,
+            "type": ptype,
+            "language": artifact.get("language", ""),
+            "licenses": licenses,
+        })
+    return packages
 
 
 def _format_scan_date() -> str:
@@ -508,6 +551,10 @@ def generate_enhanced_html_report(
             "trivy_unique": merged_results.get("trivy_unique_count", 0),
             "both_scanners": merged_results.get("both_scanners_count", 0),
             "sbom_statistics": sbom_stats,
+            # License-compliance summary computed earlier (may be absent if the
+            # SBOM couldn't be loaded). The template renders a section when
+            # `license_compliance` is truthy.
+            "license_compliance": merged_results.get("license_compliance"),
             "scan_summary": {
                 "status": "Failed" if (severity_counts.get("Critical", 0) + severity_counts.get("High", 0)) > 0 else "Passed",
                 "total_packages": sbom_stats.get("total_packages", 0),
@@ -686,7 +733,42 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) ->
             merged_results["vulnerabilities"]["all"] = enriched_vulns
             merged_results["enrichment_summary"] = enrichment_summary
 
-            # Generate enhanced HTML report (now has access to EPSS/KEV/risk_priority)
+            # Run license compliance now (before HTML report) so it can render
+            # the new "License Compliance" section. We need the Syft SBOM
+            # which has already been written to disk by the syft scanner.
+            license_compliance = None
+            sbom_data_cached = None
+            try:
+                syft_json_path = f"{settings.SBOMS_DIR}/{scan_id}_syft_json.json"
+                if os.path.exists(syft_json_path):
+                    with open(syft_json_path, "r") as f:
+                        sbom_data_cached = json.load(f)
+                    sbom_packages = _extract_packages_from_sbom(sbom_data_cached)
+                    license_compliance = evaluate_licenses(sbom_packages)
+                    logger.info(
+                        "License compliance evaluated",
+                        scan_id=scan_id,
+                        status=license_compliance.status,
+                        fail=license_compliance.severity_counts.get("fail", 0),
+                        warn=license_compliance.severity_counts.get("warn", 0),
+                    )
+                    redis_client.set(
+                        f"licenses:{scan_id}",
+                        json.dumps(licenses_to_dict(license_compliance)),
+                        ex=settings.SCAN_RESULT_TTL,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "License compliance analysis failed",
+                    scan_id=scan_id, error=str(e),
+                )
+
+            # Stash the compliance result into merged_results so the HTML
+            # generator can render it without changing its function signature.
+            if license_compliance:
+                merged_results["license_compliance"] = licenses_to_dict(license_compliance)
+
+            # Generate enhanced HTML report (now has access to EPSS/KEV/risk_priority + license compliance)
             html_report, vuln_counts = generate_enhanced_html_report(scan_id, image_name, merged_results)
 
             if not html_report:
@@ -709,13 +791,18 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) ->
             base_image_info = sbom_stats.get("base_image", {})
             image_metadata = sbom_stats.get("image_metadata", {})
 
-            # Generate SBOM HTML report
+            # Generate SBOM HTML report. License compliance already ran above
+            # (it has to, so the vuln report can render the new section), so
+            # we just reuse the cached SBOM data here when possible.
             sbom_html_report = None
             try:
-                syft_json_path = f"{settings.SBOMS_DIR}/{scan_id}_syft_json.json"
-                if os.path.exists(syft_json_path):
-                    with open(syft_json_path, "r") as f:
-                        sbom_data = json.load(f)
+                sbom_data = sbom_data_cached
+                if sbom_data is None:
+                    syft_json_path = f"{settings.SBOMS_DIR}/{scan_id}_syft_json.json"
+                    if os.path.exists(syft_json_path):
+                        with open(syft_json_path, "r") as f:
+                            sbom_data = json.load(f)
+                if sbom_data is not None:
                     sbom_html_report = generate_sbom_html_report(
                         scan_id,
                         image_name,
@@ -814,7 +901,23 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) ->
                 "kev_matches": enrichment_summary.get("kev_matches", 0),
                 "epss_enriched": enrichment_summary.get("epss_enriched", 0),
                 "high_risk_vulns": enrichment_summary.get("high_risk_vulns", 0),
-                "image_digest": image_digest or ""
+                "image_digest": image_digest or "",
+                # License compliance summary — full list is at licenses:<scan_id>
+                "license_policy_status": (
+                    license_compliance.status if license_compliance else "unknown"
+                ),
+                "license_policy_fail":   (
+                    license_compliance.severity_counts.get("fail", 0)
+                    if license_compliance else 0
+                ),
+                "license_policy_warn":   (
+                    license_compliance.severity_counts.get("warn", 0)
+                    if license_compliance else 0
+                ),
+                "license_unknown_count": (
+                    license_compliance.counts.get("unknown", 0)
+                    if license_compliance else 0
+                ),
             }
 
             redis_client.hset(scan_id, mapping=redis_result)
