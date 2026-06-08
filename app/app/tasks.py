@@ -221,6 +221,24 @@ def on_worker_ready(**kwargs):
         )
 
 
+def _format_scan_date() -> str:
+    """Render the report's "Scan Date" line as TZ-aware local time.
+
+    `%Z` (timezone name) returns an empty string when TZ is a POSIX-style
+    string like `IST-5:30` because Python's strftime reads `time.tzname`,
+    which only knows about named timezones from /usr/share/zoneinfo. So we
+    use `.astimezone()` to attach the offset, then format with `%z` (which
+    always works) and insert a colon so the output looks like:
+
+        2026-06-08 09:24:51 +05:30
+    """
+    dt = datetime.now().astimezone()
+    offset = dt.strftime("%z")  # e.g. "+0530"
+    if len(offset) == 5:
+        offset = offset[:3] + ":" + offset[3:]  # "+05:30"
+    return dt.strftime("%Y-%m-%d %H:%M:%S") + " " + offset
+
+
 def generate_sbom_html_report(
     scan_id: str,
     image_name: str,
@@ -342,7 +360,9 @@ def generate_sbom_html_report(
         report_context = {
             "image_name": image_name,
             "scan_id": scan_id,
-            "scan_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
+            # Format like "2026-06-08 09:24:51 IST (+05:30)" — works whether TZ
+            # is a named zone (Asia/Kolkata) or POSIX (IST-5:30).
+            "scan_date": _format_scan_date(),
             "total_packages": len(packages),
             "total_languages": len(languages),
             "total_licenses": len(all_licenses),
@@ -470,7 +490,7 @@ def generate_enhanced_html_report(
         report_context = {
             "image_name": image_name,
             "scan_id": scan_id,
-            "scan_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "scan_date": _format_scan_date(),
             "vulnerabilities": all_vulns_sorted,
             "all_vulnerabilities": all_vulns_sorted,
             "severity_counts": severity_counts,
