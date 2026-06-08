@@ -128,6 +128,52 @@
             .report-container { margin: 1rem auto; }
             .severity-count { font-size: 2rem; }
         }
+
+        /* Print-as-PDF view. When the user clicks "Download PDF" we briefly
+           expand DataTables to show every filtered row, then call print().
+           This block hides interactive chrome so the saved PDF looks like a
+           static report, not a screenshot of a web app. */
+        @media print {
+            body { background: white !important; }
+            .report-container { max-width: 100% !important; margin: 0 !important; padding: 0.5rem !important; }
+            .report-header {
+                background: #2b3035 !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+                page-break-after: avoid;
+            }
+            .table-section {
+                box-shadow: none !important;
+                border: 1px solid #dee2e6;
+                page-break-inside: avoid;
+            }
+            /* Vuln table can span many pages — let it break, repeat the header. */
+            #vulnTable {
+                page-break-inside: auto;
+            }
+            #vulnTable thead { display: table-header-group; }
+            #vulnTable tbody tr { page-break-inside: avoid; }
+
+            /* Hide everything interactive: filter buttons, DataTables search /
+               pagination / action buttons, and the per-row "Details" link. */
+            #vulnFilters,
+            #vulnTable_filter,
+            #vulnTable_paginate,
+            #vulnTable_info,
+            #vulnTable_length,
+            .dt-buttons,
+            #vulnTable thead th:last-child,
+            #vulnTable tbody td:last-child,
+            .pdf-hide,
+            .print-hide { display: none !important; }
+
+            /* Show the "Filter applied: X" badge that's normally hidden. */
+            .print-only { display: block !important; }
+
+            /* Keep severity / KEV badges colored when printed. */
+            .vuln-badge, .badge { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        }
+        .print-only { display: none; }
     </style>
 </head>
 <body>
@@ -148,10 +194,19 @@
             </div>
             {% endif %}
 
-            <div style="margin-top: 1rem;">
+            <div style="margin-top: 1rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
                 <span class="badge {{ 'bg-success' if scan_summary.status == 'Passed' else 'bg-danger' }}" style="font-size: 1rem; padding: 0.5rem 1rem;">
                     {{ scan_summary.status }}
                 </span>
+                <button id="downloadPdfBtn" type="button" class="btn btn-light btn-sm print-hide"
+                        style="font-weight: 500;">
+                    <i class="fas fa-file-pdf"></i> Download as PDF
+                </button>
+            </div>
+
+            <!-- Shown only when printing — tells the reader which filter the PDF was captured under. -->
+            <div id="printFilterNote" class="print-only" style="margin-top: 0.75rem; font-size: 0.9rem; opacity: 0.85;">
+                <i class="fas fa-filter"></i> Filter applied: <strong id="printFilterName">All</strong>
             </div>
         </div>
 
@@ -487,6 +542,33 @@
             });
 
             if (activeFilter !== 'all') applyFilter(activeFilter);
+
+            // Download-as-PDF: capture the entire report with the current filter
+            // applied. We briefly expand DataTables to "show all" so the PDF
+            // includes every filtered row (not just page 1), then restore the
+            // previous page length once printing finishes.
+            const FILTER_LABELS = {
+                'all':           'All',
+                'fixable':       'Fixable only',
+                'kev':           'KEV only (CISA Known Exploited)',
+                'high-epss':     'High EPSS ≥ 50%',
+                'critical-high': 'Critical + High severity',
+            };
+
+            $('#downloadPdfBtn').on('click', function () {
+                $('#printFilterName').text(FILTER_LABELS[activeFilter] || activeFilter);
+                const prevLen = table.page.len();
+                table.page.len(-1).draw(false);  // show all rows that pass the filter
+                // afterprint is more reliable than a setTimeout — fires when the
+                // user closes the print dialog whether they saved or cancelled.
+                const restore = function () {
+                    table.page.len(prevLen).draw(false);
+                    window.removeEventListener('afterprint', restore);
+                };
+                window.addEventListener('afterprint', restore);
+                // Defer the print() call so DataTables finishes its redraw first.
+                setTimeout(function () { window.print(); }, 100);
+            });
         });
     </script>
 </body>
