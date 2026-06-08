@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Multi-Scanner Security Report - {{ image_name }}</title>
+    <title>Vulnerability Scan Report - {{ image_name }}</title>
 
     <!-- Google Fonts -->
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" />
@@ -135,7 +135,7 @@
         <!-- Report Header -->
         <div class="report-header">
             <div style="font-size: 2rem; font-weight: 600; margin-bottom: 0.5rem;">
-                <i class="fas fa-shield-alt"></i> Multi-Scanner Security Report
+                <i class="fas fa-shield-alt"></i> Vulnerability Scan Report
             </div>
             <div style="font-size: 1.1rem; opacity: 0.9;">{{ image_name }}</div>
             <div style="margin-top: 0.5rem;">Scan ID: {{ scan_id }}</div>
@@ -154,43 +154,6 @@
                 </span>
             </div>
         </div>
-
-        <!-- Multi-Scanner Summary -->
-        {% if scanners_used|length > 1 %}
-        <div class="table-section">
-            <h4><i class="fas fa-layer-group"></i> Multi-Scanner Analysis Summary</h4>
-            <div class="row mt-3">
-                <div class="col-md-3">
-                    <div class="text-center p-3 bg-light rounded">
-                        <div style="font-size: 2rem; color: #198754;">{{ both_scanners }}</div>
-                        <div style="font-size: 0.9rem;">Found by Both Scanners</div>
-                        <small class="text-muted">High Confidence</small>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="text-center p-3 bg-light rounded">
-                        <div style="font-size: 2rem; color: #1976d2;">{{ grype_unique }}</div>
-                        <div style="font-size: 0.9rem;">Grype Only</div>
-                        <small class="text-muted">Medium Confidence</small>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="text-center p-3 bg-light rounded">
-                        <div style="font-size: 2rem; color: #7b1fa2;">{{ trivy_unique }}</div>
-                        <div style="font-size: 0.9rem;">Trivy Only</div>
-                        <small class="text-muted">Medium Confidence</small>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="text-center p-3 bg-light rounded">
-                        <div style="font-size: 2rem; color: #fd7e14;">{{ total_secrets }}</div>
-                        <div style="font-size: 0.9rem;">Secrets Detected</div>
-                        <small class="text-muted">By Trivy</small>
-                    </div>
-                </div>
-            </div>
-        </div>
-        {% endif %}
 
         <!-- Vulnerability Statistics -->
         <div class="stats-section mb-4">
