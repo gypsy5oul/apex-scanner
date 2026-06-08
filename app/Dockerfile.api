@@ -18,8 +18,13 @@ RUN python3.12 -m venv /opt/app-root/venv && \
 # ============================================================
 FROM registry.access.redhat.com/ubi9/ubi-minimal AS runtime
 
-# Install minimal runtime deps
+# Install minimal runtime deps.
+# `tzdata` from UBI ships without /usr/share/zoneinfo/Asia/* so we explicitly
+# install it again with `--setopt=install_weak_deps=False --setopt=tsflags=`
+# to force a full reinstall with all zoneinfo files. Without this, named
+# timezones like Asia/Kolkata fall back to UTC at runtime.
 RUN microdnf install -y python3.12 shadow-utils && \
+    microdnf reinstall -y --setopt=tsflags= tzdata && \
     microdnf clean all && \
     rm -rf /var/cache/yum
 

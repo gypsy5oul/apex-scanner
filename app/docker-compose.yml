@@ -4,8 +4,12 @@ version: "3.8"
 x-common-env: &common-env
   # Default to IST so container `date`, structured-log timestamps, and any
   # naive datetime.now() calls render in the timezone the team operates in.
-  # Override with TZ=... in .env to run somewhere else.
-  TZ: ${TZ:-Asia/Kolkata}
+  # POSIX-format (IST-5:30) is used instead of Asia/Kolkata because UBI's
+  # tzdata package ships without /usr/share/zoneinfo/Asia/* — glibc falls
+  # back to UTC when the named zone file is missing. POSIX syntax needs no
+  # zone files; the negative sign in -5:30 means "5:30 ahead of UTC".
+  # India observes no DST so this is exact. Override with TZ=... in .env.
+  TZ: ${TZ:-IST-5:30}
   REDIS_URL: redis://redis:6379/0
   REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
   REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-false}

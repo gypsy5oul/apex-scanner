@@ -96,7 +96,10 @@ RUN python3.12 -m venv /opt/app-root/venv && \
 FROM registry.access.redhat.com/ubi9/ubi-minimal AS runtime
 
 # Install minimal runtime deps (skopeo for digest resolution)
+# tzdata from UBI ships without /usr/share/zoneinfo/Asia/* — reinstall it
+# with full content so named timezones (Asia/Kolkata etc.) work at runtime.
 RUN microdnf install -y python3.12 skopeo shadow-utils ca-certificates && \
+    microdnf reinstall -y --setopt=tsflags= tzdata && \
     microdnf clean all && \
     rm -rf /var/cache/yum
 
