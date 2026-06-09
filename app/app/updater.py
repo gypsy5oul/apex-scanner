@@ -380,7 +380,12 @@ class UpdateService:
 
     def update_trivy_db(self) -> Dict[str, Any]:
         """
-        Update Trivy vulnerability database
+        Update Trivy vulnerability database AND the Java DB.
+
+        Trivy has its own internal cache TTL (24h on the vuln DB, 3 days on
+        the Java DB) and will silently skip a download if it thinks the
+        cache is still fresh. We bypass that by clearing the cache first,
+        so manual UI triggers and scheduled refreshes both actually re-pull.
 
         Returns:
             Update status
@@ -388,13 +393,35 @@ class UpdateService:
         logger.info("Starting Trivy database update")
 
         try:
-            # Trivy updates DB on first scan, but we can force it
+            # Step 1: clear the local cache so Trivy can't fall back to
+            # "cache is still fresh per my TTL window, nothing to do".
+            subprocess.run(
+                ["trivy", "clean", "--vuln-db", "--java-db"],
+                capture_output=True, text=True, timeout=60,
+            )
+
+            # Step 2: download the vulnerability DB.
             result = subprocess.run(
                 ["trivy", "image", "--download-db-only"],
                 capture_output=True,
                 text=True,
                 timeout=300
             )
+
+            # Step 3: download the Java DB too — netty/Maven CVEs live here.
+            # If this fails we still consider the vuln-DB refresh a success
+            # so the overall task is not marked failed for a Java DB hiccup.
+            java_result = subprocess.run(
+                ["trivy", "image", "--download-java-db-only"],
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            if java_result.returncode != 0:
+                logger.warning(
+                    "Trivy Java DB download failed (vuln DB still updated): %s",
+                    (java_result.stderr or "")[:300],
+                )
 
             success = result.returncode == 0
 

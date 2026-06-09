@@ -19,6 +19,13 @@
 secrets/
 
 # =============================================
+# Scanner runtime caches (Grype + Trivy DBs)
+# Shared bind-mount populated by the workers at runtime, ~4 GB.
+# Created automatically; never check in.
+# =============================================
+scanner-cache/
+
+# =============================================
 # Python
 # =============================================
 __pycache__/

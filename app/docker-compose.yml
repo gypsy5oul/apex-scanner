@@ -94,6 +94,12 @@ services:
     volumes:
       - /opt/scanner-reports:/var/www/html/reports
       - /opt/scanner-sboms:/var/www/html/sboms
+      # Shared Grype + Trivy DB caches. One refresh updates every worker —
+      # before this mount each worker had its own writable-layer cache, so
+      # `update_vulnerability_databases` running on worker-system never
+      # reached the scanning workers and they could stay up to 24h stale.
+      - /opt/new-grype-scanner-v1/scanner-cache/grype:/home/scanner/.cache/grype
+      - /opt/new-grype-scanner-v1/scanner-cache/trivy:/home/scanner/.cache/trivy
       - ${DOCKER_CONFIG_PATH:-./scripts/empty-docker-config.json}:/home/scanner/.docker/config.json:ro
     restart: unless-stopped
     deploy:
@@ -130,6 +136,12 @@ services:
     volumes:
       - /opt/scanner-reports:/var/www/html/reports
       - /opt/scanner-sboms:/var/www/html/sboms
+      # Shared Grype + Trivy DB caches. One refresh updates every worker —
+      # before this mount each worker had its own writable-layer cache, so
+      # `update_vulnerability_databases` running on worker-system never
+      # reached the scanning workers and they could stay up to 24h stale.
+      - /opt/new-grype-scanner-v1/scanner-cache/grype:/home/scanner/.cache/grype
+      - /opt/new-grype-scanner-v1/scanner-cache/trivy:/home/scanner/.cache/trivy
       - ${DOCKER_CONFIG_PATH:-./scripts/empty-docker-config.json}:/home/scanner/.docker/config.json:ro
     restart: unless-stopped
     deploy:
@@ -164,6 +176,11 @@ services:
     volumes:
       - /opt/scanner-reports:/var/www/html/reports
       - /opt/scanner-sboms:/var/www/html/sboms
+      # Same shared cache as worker-high/worker-batch — system worker is the
+      # one that runs the scheduled DB updates, so it MUST write to the same
+      # volume the scanning workers read from.
+      - /opt/new-grype-scanner-v1/scanner-cache/grype:/home/scanner/.cache/grype
+      - /opt/new-grype-scanner-v1/scanner-cache/trivy:/home/scanner/.cache/trivy
     restart: unless-stopped
     deploy:
       resources:

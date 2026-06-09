@@ -1245,10 +1245,14 @@ celery.conf.beat_schedule = {
         'schedule': 86400.0,  # Every 24 hours (in seconds)
         'options': {'queue': 'low_priority'}  # Must match task_routes config
     },
-    'update-vulnerability-db-daily': {
+    'update-vulnerability-db-frequent': {
         'task': 'update_vulnerability_databases',
-        'schedule': 43200.0,  # Every 12 hours (in seconds)
-        'options': {'queue': 'system'}  # Must match task_routes config
+        # Every 3h — Aqua publishes the Trivy DB roughly every 6h and Anchore
+        # publishes Grype DB nightly, so 3h is short enough to never miss a
+        # publication window. With the shared scanner-cache mount one refresh
+        # propagates to every worker automatically.
+        'schedule': 10800.0,  # 3 hours in seconds
+        'options': {'queue': 'system'},
     },
     'update-kev-database': {
         'task': 'update_kev_database',
