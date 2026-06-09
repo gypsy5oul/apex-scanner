@@ -591,14 +591,17 @@ def generate_enhanced_html_report(
 
 
 @celery.task(bind=True, name='scan_image', max_retries=3, default_retry_delay=30)
-def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = False) -> Dict[str, Any]:
+def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = True) -> Dict[str, Any]:
     """
     Execute multi-scanner vulnerability and SBOM analysis
 
     Args:
         image_name: Docker image to scan
         scan_id: Unique scan identifier
-        skip_cache: If True, bypass digest cache and force rescan
+        skip_cache: Defaults to True — every scan runs the scanners. Set to
+            False to allow the 24h digest cache to return a prior result
+            (rare; meaningful only when you genuinely want a duplicate
+            scan of the same image to short-circuit).
 
     Returns:
         Dictionary with complete scan results

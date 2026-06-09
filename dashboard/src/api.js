@@ -52,7 +52,11 @@ apiV2.interceptors.response.use((response) => response, on401Response);
 // ============ V1 Endpoints ============
 
 // Scan endpoints
-export const startScan = (imageName, skipCache = false) =>
+// Fresh-by-default. The server now defaults skip_cache to true (every
+// scan runs the scanners), so a UI call that doesn't override gets a
+// guaranteed-fresh result. Pass `skipCache: false` to explicitly opt
+// into the digest cache (rare; meaningful only for batch CI/CD scans).
+export const startScan = (imageName, skipCache = true) =>
   api.post('/scan', { image_name: imageName, skip_cache: skipCache });
 export const getScanResult = (scanId) => api.get(`/scan/${scanId}`);
 export const getReport = (scanId) => api.get(`/reports/${scanId}`);

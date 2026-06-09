@@ -116,8 +116,17 @@ class ScanRequest(BaseModel):
         examples=["nginx:latest"]
     )
     skip_cache: bool = Field(
-        default=False,
-        description="If true, bypass the digest cache and force a fresh scan even if a cached result exists for this image digest"
+        # Fresh-by-default. The digest cache was confusing in practice:
+        # users would scan an image right after a code/DB update and get a
+        # stale cached result silently. Now every API call runs the
+        # scanners fresh unless the caller explicitly opts in to caching.
+        default=True,
+        description=(
+            "Defaults to True — every scan runs fresh. Set to False to "
+            "allow the 24h digest cache to return a prior scan result for "
+            "the same image digest (only useful for high-volume identical "
+            "CI/CD scans where you trust the recent result)."
+        ),
     )
 
     @field_validator('image_name')
@@ -133,7 +142,7 @@ class ScanRequest(BaseModel):
 
     model_config = {
         "json_schema_extra": {
-            "example": {"image_name": "ubuntu:20.04", "skip_cache": False}
+            "example": {"image_name": "ubuntu:20.04", "skip_cache": True}
         }
     }
 
