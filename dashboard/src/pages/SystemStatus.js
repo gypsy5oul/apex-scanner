@@ -272,15 +272,29 @@ function SystemStatus() {
                 <Box>
                   <Grid container spacing={2}>
                     <Grid item xs={6}>
-                      <Typography variant="body2" color="textSecondary">Built</Typography>
+                      <Typography variant="body2" color="textSecondary">
+                        DB Build Date (vendor)
+                      </Typography>
                       <Typography variant="body1">
-                        {dbStatus.grype.built || 'Unknown'}
+                        {dbStatus.grype.built
+                          ? new Date(dbStatus.grype.built).toLocaleString()
+                          : 'Unknown'}
+                      </Typography>
+                      <Typography variant="caption" color="textSecondary">
+                        When Anchore published this DB, not when we fetched it
                       </Typography>
                     </Grid>
                     <Grid item xs={6}>
-                      <Typography variant="body2" color="textSecondary">Schema Version</Typography>
+                      <Typography variant="body2" color="textSecondary">
+                        Last Fetched
+                      </Typography>
                       <Typography variant="body1">
-                        {dbStatus.grype.schema_version || 'Unknown'}
+                        {dbStatus.last_updates?.grype
+                          ? new Date(dbStatus.last_updates.grype).toLocaleString()
+                          : 'Never'}
+                      </Typography>
+                      <Typography variant="caption" color="textSecondary">
+                        Schema {dbStatus.grype.schema_version || '—'}
                       </Typography>
                     </Grid>
                   </Grid>

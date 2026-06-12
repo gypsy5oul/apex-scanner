@@ -1277,7 +1277,7 @@ celery.conf.timezone = 'UTC'
 def update_vulnerability_databases(self) -> Dict[str, Any]:
     """
     Celery task to update vulnerability databases (Grype, Trivy)
-    Runs every 12 hours via beat schedule
+    Runs every 3 hours via beat schedule
     Also checks and caches tool versions for the System Status page
     """
     from app.updater import UpdateService
@@ -1296,6 +1296,23 @@ def update_vulnerability_databases(self) -> Dict[str, Any]:
 
         # Add tool status to result
         result["tool_versions"] = tool_status
+
+        # Refresh the cached DB status AFTER both Grype and Trivy have run.
+        # update_grype_db() writes this cache mid-run with a last_updates
+        # snapshot taken before Trivy records its own timestamp, so without
+        # this final rewrite the System page would show a stale Trivy date.
+        try:
+            import json as _json
+            from app.updater import DB_STATUS_KEY, TOOL_STATUS_TTL
+            db_status = {
+                "grype": updater._get_grype_db_info(),
+                "last_updates": updater.get_last_updates(),
+                "grype_hours_since_update": 0,
+                "grype_update_due": False,
+            }
+            updater.redis.setex(DB_STATUS_KEY, TOOL_STATUS_TTL, _json.dumps(db_status))
+        except Exception as _e:
+            logger.warning(f"Could not refresh cached DB status: {_e}")
 
         logger.info(
             "Vulnerability database update completed",
