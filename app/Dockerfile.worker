@@ -147,21 +147,14 @@ ENV GRYPE_DB_CACHE_DIR=/home/scanner/.cache/grype/db
 ENV TRIVY_CACHE_DIR=/home/scanner/.cache/trivy
 ENV XDG_CACHE_HOME=/home/scanner/.cache
 
-# Pre-download scanner DBs at build time to avoid download failures at runtime
-RUN TRIVY_CACHE_DIR=/home/scanner/.cache/trivy \
-    trivy image --download-db-only --db-repository ghcr.io/aquasecurity/trivy-db:2 && \
-    TRIVY_CACHE_DIR=/home/scanner/.cache/trivy \
-    trivy image --download-java-db-only --java-db-repository ghcr.io/aquasecurity/trivy-java-db:1 && \
-    XDG_CACHE_HOME=/home/scanner/.cache grype db update && \
-    chown -R scanner:scanner /home/scanner/.cache
-
-# Verify DBs were actually downloaded
-RUN echo "=== Verifying scanner databases ===" && \
-    test -d /home/scanner/.cache/trivy/db || (echo "FATAL: Trivy vulnerability DB not found" && exit 1) && \
-    echo "Trivy DB: OK" && \
-    XDG_CACHE_HOME=/home/scanner/.cache grype db check || (echo "FATAL: Grype DB validation failed" && exit 1) && \
-    echo "Grype DB: OK" && \
-    echo "=== All scanner databases verified ==="
+# NOTE: scanner DBs are NOT pre-downloaded at build time anymore.
+# At runtime, docker-compose bind-mounts a shared host cache
+# (scanner-cache/{grype,trivy}) over /home/scanner/.cache, which would
+# shadow any baked-in DBs — so downloading them here just wasted ~6 min
+# of build time and ~1GB of image size per worker for data that was never
+# read. The shared cache is the single source of truth: it is seeded once
+# and kept fresh by the 3h `update_vulnerability_databases` task, and
+# worker-entrypoint.sh seeds it on first boot if it is ever empty.
 
 # Expose relevant ports (not required for worker, but useful for debugging)
 EXPOSE 8000
