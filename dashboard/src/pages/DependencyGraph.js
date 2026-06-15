@@ -30,6 +30,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import { useTheme } from '@mui/material/styles';
 import { getSeverity, severityAccent } from '../theme/tokens';
 import SeverityChip from '../components/SeverityChip';
+import { CountUp } from '../components/Motion';
 import { getDependencyGraph, getPackageImpact } from '../api';
 
 // Mini count chip with guaranteed-contrast severity colors from tokens.
@@ -225,7 +226,7 @@ function DependencyGraph() {
           <Grid item xs={6} md={3}>
             <Card variant="outlined">
               <CardContent sx={{ textAlign: 'center', py: 1.5 }}>
-                <Typography variant="h4" fontWeight={700} color="primary">{stats.totalPackages}</Typography>
+                <Typography variant="h4" fontWeight={700} color="primary"><CountUp value={stats.totalPackages} /></Typography>
                 <Typography variant="caption" color="text.secondary">Total Packages</Typography>
               </CardContent>
             </Card>
@@ -233,7 +234,7 @@ function DependencyGraph() {
           <Grid item xs={6} md={3}>
             <Card variant="outlined">
               <CardContent sx={{ textAlign: 'center', py: 1.5 }}>
-                <Typography variant="h4" fontWeight={700} color="error">{stats.vulnerablePackages}</Typography>
+                <Typography variant="h4" fontWeight={700} color="error"><CountUp value={stats.vulnerablePackages} /></Typography>
                 <Typography variant="caption" color="text.secondary">Vulnerable</Typography>
               </CardContent>
             </Card>
@@ -241,7 +242,7 @@ function DependencyGraph() {
           <Grid item xs={6} md={3}>
             <Card variant="outlined">
               <CardContent sx={{ textAlign: 'center', py: 1.5 }}>
-                <Typography variant="h4" fontWeight={700} sx={{ color: severityAccent('critical', theme.palette.mode) }}>{stats.criticalPackages}</Typography>
+                <Typography variant="h4" fontWeight={700} sx={{ color: severityAccent('critical', theme.palette.mode) }}><CountUp value={stats.criticalPackages} /></Typography>
                 <Typography variant="caption" color="text.secondary">Critical</Typography>
               </CardContent>
             </Card>
@@ -249,7 +250,7 @@ function DependencyGraph() {
           <Grid item xs={6} md={3}>
             <Card variant="outlined">
               <CardContent sx={{ textAlign: 'center', py: 1.5 }}>
-                <Typography variant="h4" fontWeight={700} color="text.secondary">{stats.totalEdges}</Typography>
+                <Typography variant="h4" fontWeight={700} color="text.secondary"><CountUp value={stats.totalEdges} /></Typography>
                 <Typography variant="caption" color="text.secondary">Dependencies</Typography>
               </CardContent>
             </Card>

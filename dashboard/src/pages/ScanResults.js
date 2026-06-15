@@ -60,6 +60,7 @@ import SeverityChip from '../components/SeverityChip';
 import { VulnerabilityDoughnut } from '../components/VulnerabilityChart';
 import AITriagePanel from '../components/AITriagePanel';
 import { PageHeaderSkeleton, CardGridSkeleton } from '../components/LoadingSkeletons';
+import { CountUp } from '../components/Motion';
 
 // Rewrite report/SBOM URLs to use the actual API host instead of whatever the backend stored
 const getApiHost = () => {
@@ -799,7 +800,7 @@ function ScanResults() {
                                 <CardContent sx={{ textAlign: 'center' }}>
                                   <GppMaybeIcon sx={{ fontSize: 40, mb: 1 }} />
                                   <Typography variant="h3" fontWeight="bold">
-                                    {kevMatches?.total_kev_matches || 0}
+                                    <CountUp value={kevMatches?.total_kev_matches || 0} />
                                   </Typography>
                                   <Typography variant="body2">
                                     Known Exploited (KEV)
@@ -812,7 +813,7 @@ function ScanResults() {
                                 <CardContent sx={{ textAlign: 'center' }}>
                                   <TrendingUpIcon sx={{ fontSize: 40, mb: 1 }} />
                                   <Typography variant="h3" fontWeight="bold">
-                                    {enrichedData?.enrichment_summary?.high_risk_vulns || 0}
+                                    <CountUp value={enrichedData?.enrichment_summary?.high_risk_vulns || 0} />
                                   </Typography>
                                   <Typography variant="body2">
                                     High Risk Priority
@@ -825,7 +826,7 @@ function ScanResults() {
                                 <CardContent sx={{ textAlign: 'center' }}>
                                   <SecurityIcon sx={{ fontSize: 40, mb: 1 }} />
                                   <Typography variant="h3" fontWeight="bold">
-                                    {enrichedData?.enrichment_summary?.epss_enriched || 0}
+                                    <CountUp value={enrichedData?.enrichment_summary?.epss_enriched || 0} />
                                   </Typography>
                                   <Typography variant="body2">
                                     EPSS Enriched

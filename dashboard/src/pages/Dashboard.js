@@ -29,6 +29,7 @@ import ErrorIcon from '@mui/icons-material/Error';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import { getStats, healthCheck, getRecentScans } from '../api';
 import { PageHeaderSkeleton, StatCardsSkeleton, CardGridSkeleton } from '../components/LoadingSkeletons';
+import { Reveal, CountUp } from '../components/Motion';
 
 function StatCard({ title, value, subtitle, icon, color }) {
   return (
@@ -67,7 +68,7 @@ function StatCard({ title, value, subtitle, icon, color }) {
           </Typography>
         </Box>
         <Typography variant="h3" fontWeight={700} sx={{ mb: 0.25, fontVariantNumeric: 'tabular-nums' }}>
-          {value}
+          {typeof value === 'number' ? <CountUp value={value} /> : value}
         </Typography>
         {subtitle && (
           <Typography variant="caption" color="text.disabled">
@@ -241,40 +242,48 @@ function Dashboard() {
       {/* Stats Grid */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} sm={6} lg={3}>
-          <StatCard
-            title="Images Scanned"
-            value={stats?.total_images_scanned || 0}
-            subtitle="All time"
-            icon={<InventoryIcon />}
-            color="#2196f3"
-          />
+          <Reveal delay={0.05} sx={{ height: '100%' }}>
+            <StatCard
+              title="Images Scanned"
+              value={stats?.total_images_scanned || 0}
+              subtitle="All time"
+              icon={<InventoryIcon />}
+              color="#2196f3"
+            />
+          </Reveal>
         </Grid>
         <Grid item xs={12} sm={6} lg={3}>
-          <StatCard
-            title="Active Scanners"
-            value={Object.values(stats?.scanners_enabled || {}).filter(Boolean).length}
-            subtitle="Grype, Trivy, Syft"
-            icon={<SecurityIcon />}
-            color="#4caf50"
-          />
+          <Reveal delay={0.11} sx={{ height: '100%' }}>
+            <StatCard
+              title="Active Scanners"
+              value={Object.values(stats?.scanners_enabled || {}).filter(Boolean).length}
+              subtitle="Grype, Trivy, Syft"
+              icon={<SecurityIcon />}
+              color="#4caf50"
+            />
+          </Reveal>
         </Grid>
         <Grid item xs={12} sm={6} lg={3}>
-          <StatCard
-            title="Critical + High"
-            value={totalVulns}
-            subtitle="Recent scans"
-            icon={<ErrorIcon />}
-            color="#f44336"
-          />
+          <Reveal delay={0.17} sx={{ height: '100%' }}>
+            <StatCard
+              title="Critical + High"
+              value={totalVulns}
+              subtitle="Recent scans"
+              icon={<ErrorIcon />}
+              color="#f44336"
+            />
+          </Reveal>
         </Grid>
         <Grid item xs={12} sm={6} lg={3}>
-          <StatCard
-            title="Scan Timeout"
-            value={`${stats?.configuration?.scan_timeout || 300}s`}
-            subtitle="Max duration"
-            icon={<ScheduleIcon />}
-            color="#9c27b0"
-          />
+          <Reveal delay={0.23} sx={{ height: '100%' }}>
+            <StatCard
+              title="Scan Timeout"
+              value={`${stats?.configuration?.scan_timeout || 300}s`}
+              subtitle="Max duration"
+              icon={<ScheduleIcon />}
+              color="#9c27b0"
+            />
+          </Reveal>
         </Grid>
       </Grid>
 

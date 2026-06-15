@@ -28,12 +28,9 @@ function Navbar({ onMenuClick }) {
       position="fixed"
       elevation={0}
       sx={{
+        // Frosted-chrome background + blur come from the theme's MuiAppBar
+        // override; we only need to sit above the drawer here.
         zIndex: (theme) => theme.zIndex.drawer + 1,
-        backdropFilter: 'blur(8px)',
-        backgroundColor: (theme) =>
-          alpha(theme.palette.background.paper, 0.9),
-        borderBottom: '1px solid',
-        borderColor: 'divider',
       }}
     >
       <Toolbar>

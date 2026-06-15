@@ -30,6 +30,68 @@ export const slate = {
 };
 
 // ---------------------------------------------------------------------------
+// Motion + glass tokens (the "aurora glass" concept).
+//
+// Glass is applied ONLY to chrome (app bar, sidebar) and Cards — never to the
+// Paper surfaces that wrap dense/scrolling tables, where backdrop-filter both
+// janks and hurts readability. Motion is always gated on prefers-reduced-motion.
+// ---------------------------------------------------------------------------
+
+// Shared easing — the expressive "spring-like" curve from the concept.
+export const EASING = 'cubic-bezier(0.16, 1, 0.3, 1)';
+
+export const glassTokens = {
+  dark: {
+    bg: 'rgba(255,255,255,0.055)',
+    bgStrong: 'rgba(255,255,255,0.09)',
+    border: 'rgba(255,255,255,0.10)',
+    borderStrong: 'rgba(255,255,255,0.18)',
+    blur: 'blur(22px) saturate(140%)',
+    shadow: '0 10px 40px rgba(0,0,0,0.45)',
+    sheen: 'inset 0 1px 0 rgba(255,255,255,0.08)',
+    hoverShadow: '0 18px 50px rgba(0,0,0,0.55)',
+  },
+  light: {
+    bg: 'rgba(255,255,255,0.60)',
+    bgStrong: 'rgba(255,255,255,0.78)',
+    border: 'rgba(255,255,255,0.75)',
+    borderStrong: 'rgba(59,130,246,0.40)',
+    blur: 'blur(26px) saturate(185%)',
+    shadow:
+      'inset 0 1px 0 rgba(255,255,255,0.95), 0 0 0 1px rgba(15,23,42,0.04), 0 26px 54px -28px rgba(37,99,235,0.40), 0 10px 26px -18px rgba(15,23,42,0.14)',
+    sheen: 'inset 0 1px 0 rgba(255,255,255,0.95)',
+    hoverShadow:
+      'inset 0 1px 0 rgba(255,255,255,0.95), 0 0 0 1px rgba(59,130,246,0.18), 0 34px 64px -26px rgba(37,99,235,0.52)',
+  },
+};
+
+export const getGlass = (mode = 'light') => glassTokens[mode] || glassTokens.light;
+
+// Full-screen aurora backdrop per mode (consumed by <AuroraBackground/>).
+export const aurora = {
+  dark: {
+    base:
+      'radial-gradient(1200px 800px at 80% -10%, rgba(59,130,246,0.12), transparent 60%),' +
+      'radial-gradient(1000px 700px at -10% 110%, rgba(99,102,241,0.12), transparent 60%),' +
+      'linear-gradient(160deg, #0B1220, #070B14)',
+    blobs: ['#2563EB', '#7C3AED', '#06B6D4'],
+    blobOpacity: 0.45,
+    blobBlur: 80,
+  },
+  light: {
+    base:
+      'radial-gradient(820px 560px at 8% -6%, rgba(99,102,241,0.30), transparent 56%),' +
+      'radial-gradient(780px 540px at 96% -4%, rgba(56,189,248,0.28), transparent 56%),' +
+      'radial-gradient(900px 680px at 48% 116%, rgba(168,85,247,0.22), transparent 58%),' +
+      'radial-gradient(680px 520px at 102% 104%, rgba(244,114,182,0.16), transparent 56%),' +
+      'linear-gradient(165deg, #FDFEFF, #ECF1FA)',
+    blobs: ['#3B82F6', '#A855F7', '#22D3EE'],
+    blobOpacity: 0.34,
+    blobBlur: 72,
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Severity scale.
 //
 // `solid`/`onSolid`   -> high-emphasis filled chips (AA contrast guaranteed)

@@ -95,12 +95,27 @@ function Sidebar({ mobileOpen, onClose, drawerWidth }) {
                 sx={{
                   borderRadius: 2,
                   mx: 1,
+                  position: 'relative',
+                  transition: (theme) =>
+                    `background-color 0.2s ${theme.custom?.easing || 'ease'}`,
                   '&.Mui-selected': {
-                    backgroundColor: (theme) =>
-                      alpha(theme.palette.primary.main, 0.12),
+                    background: (theme) =>
+                      `linear-gradient(100deg, ${alpha(theme.palette.primary.main, 0.20)}, ${alpha(theme.palette.secondary.main, 0.12)})`,
                     '&:hover': {
-                      backgroundColor: (theme) =>
-                        alpha(theme.palette.primary.main, 0.18),
+                      background: (theme) =>
+                        `linear-gradient(100deg, ${alpha(theme.palette.primary.main, 0.26)}, ${alpha(theme.palette.secondary.main, 0.16)})`,
+                    },
+                    // Glowing accent bar on the left edge.
+                    '&::before': {
+                      content: '""',
+                      position: 'absolute',
+                      left: 2,
+                      top: '22%',
+                      height: '56%',
+                      width: 3,
+                      borderRadius: 3,
+                      backgroundColor: 'info.main',
+                      boxShadow: (theme) => `0 0 12px ${theme.palette.info.main}`,
                     },
                     '& .MuiListItemIcon-root': {
                       color: 'primary.main',

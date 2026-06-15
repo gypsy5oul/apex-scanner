@@ -1,5 +1,5 @@
 import { createTheme } from '@mui/material/styles';
-import { UI_FONT, MONO_FONT, slate, severityTokens } from './theme/tokens';
+import { UI_FONT, MONO_FONT, slate, severityTokens, getGlass, EASING } from './theme/tokens';
 
 // ---------------------------------------------------------------------------
 // Apex Scanner theme.
@@ -87,6 +87,10 @@ const componentsFor = (mode) => {
   const isLight = mode === 'light';
   const borderColor = isLight ? slate[200] : 'rgba(148,163,184,0.16)';
   const headBg = isLight ? slate[50] : 'rgba(148,163,184,0.06)';
+  const g = getGlass(mode);
+  // Chrome (app bar / drawer) is a touch more opaque than cards so its
+  // content stays legible over whatever scrolls behind it.
+  const chromeBg = isLight ? 'rgba(255,255,255,0.70)' : 'rgba(11,18,32,0.72)';
   return {
     MuiCssBaseline: {
       styleOverrides: {
@@ -95,8 +99,10 @@ const componentsFor = (mode) => {
           outline: `2px solid ${isLight ? '#2563EB' : '#60A5FA'}`,
           outlineOffset: '2px',
         },
-        // Tabular figures by default so numeric columns don't jitter.
-        body: { fontVariantNumeric: 'tabular-nums' },
+        // Body is transparent so the fixed <AuroraBackground/> shows through;
+        // html keeps a solid fallback color. Tabular figures by default.
+        html: { backgroundColor: isLight ? slate[50] : slate[950] },
+        body: { fontVariantNumeric: 'tabular-nums', backgroundColor: 'transparent' },
         // Quiet, themed scrollbars.
         '*::-webkit-scrollbar': { width: 10, height: 10 },
         '*::-webkit-scrollbar-thumb': {
@@ -121,13 +127,22 @@ const componentsFor = (mode) => {
     MuiCard: {
       defaultProps: { elevation: 0 },
       styleOverrides: {
+        // Glass surface — translucent + frosted, with a top-edge sheen and
+        // a tinted depth shadow. Used for KPI/stat/panel cards (not tables).
         root: {
-          borderRadius: 10,
-          border: `1px solid ${borderColor}`,
+          borderRadius: 16,
+          border: `1px solid ${g.border}`,
+          background: g.bg,
+          backdropFilter: g.blur,
+          WebkitBackdropFilter: g.blur,
           backgroundImage: 'none',
-          boxShadow: isLight
-            ? '0px 1px 2px rgba(15,23,42,0.04), 0px 1px 3px rgba(15,23,42,0.06)'
-            : '0px 1px 2px rgba(0,0,0,0.4)',
+          boxShadow: `${g.sheen}, ${g.shadow}`,
+          transition: `transform 0.35s ${EASING}, border-color 0.35s ${EASING}, box-shadow 0.35s ${EASING}`,
+          '&:hover': {
+            transform: 'translateY(-4px)',
+            borderColor: g.borderStrong,
+            boxShadow: g.hoverShadow,
+          },
         },
       },
     },
@@ -186,8 +201,11 @@ const componentsFor = (mode) => {
     MuiDrawer: {
       styleOverrides: {
         paper: {
-          borderRight: `1px solid ${borderColor}`,
-          backgroundColor: isLight ? '#FFFFFF' : '#131C2B',
+          borderRight: `1px solid ${g.border}`,
+          backgroundColor: chromeBg,
+          backdropFilter: g.blur,
+          WebkitBackdropFilter: g.blur,
+          backgroundImage: 'none',
           boxShadow: 'none',
         },
       },
@@ -195,9 +213,11 @@ const componentsFor = (mode) => {
     MuiAppBar: {
       styleOverrides: {
         root: {
-          backgroundColor: isLight ? 'rgba(255,255,255,0.9)' : 'rgba(19,28,43,0.9)',
+          backgroundColor: chromeBg,
+          backdropFilter: g.blur,
+          WebkitBackdropFilter: g.blur,
           color: isLight ? slate[900] : '#E5EAF2',
-          borderBottom: `1px solid ${borderColor}`,
+          borderBottom: `1px solid ${g.border}`,
           boxShadow: 'none',
         },
       },
@@ -215,8 +235,8 @@ export const createAppTheme = (mode = 'light') =>
     shape: { borderRadius: 8 },
     shadows: buildShadows(mode),
     components: componentsFor(mode),
-    // Expose the monospace stack for data cells: theme.typography.fontFamilyMono
-    custom: { monoFont: MONO_FONT },
+    // Expose the monospace stack + shared easing for components/sx callbacks.
+    custom: { monoFont: MONO_FONT, easing: EASING },
   });
 
 export const lightTheme = createAppTheme('light');

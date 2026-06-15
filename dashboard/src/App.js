@@ -3,6 +3,7 @@ import { Routes, Route, useLocation } from 'react-router-dom';
 import { Box } from '@mui/material';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
+import AuroraBackground from './components/AuroraBackground';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider } from './context/AuthContext';
 import Dashboard from './pages/Dashboard';
@@ -51,7 +52,7 @@ function MainLayout({ children }) {
           width: { xs: '100%', sm: `calc(100% - ${drawerWidth}px)` },
           mt: '64px',
           minHeight: 'calc(100vh - 64px)',
-          backgroundColor: 'background.default',
+          backgroundColor: 'transparent',
         }}
       >
         {children}
@@ -128,6 +129,7 @@ function AppRoutes() {
 function App() {
   return (
     <AuthProvider>
+      <AuroraBackground />
       <AppRoutes />
     </AuthProvider>
   );
