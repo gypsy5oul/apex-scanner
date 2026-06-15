@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SBOM Report - {{ image_name }}</title>
 
-    <!-- Google Fonts (same as vuln report) -->
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" />
+    <!-- Google Fonts (same as vuln report — Inter + JetBrains Mono) -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" />
 
     <!-- Bootstrap CSS (same as vuln report) -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
@@ -22,18 +22,24 @@
         /* Theme mirrors enhanced_report_template.html so vuln + SBOM reports
            feel like one product, not two. Any change here should also be made
            in the vuln template's <style> block. */
+        /* Aligned with the dashboard design system (dashboard/src/theme/tokens.js).
+           Mirrors enhanced_report_template.html — keep the two in sync. */
         :root {
-            --primary-color: #0d6efd;
-            --success-color: #198754;
-            --danger-color: #dc3545;
-            --warning-color: #ffc107;
-            --info-color: #0dcaf0;
+            --primary: #2563EB;
+            --primary-dark: #1E40AF;
+            --slate-50: #F8FAFC;
+            --slate-200: #E2E8F0;
+            --slate-500: #64748B;
+            --slate-700: #334155;
+            --slate-900: #0F172A;
+            --mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+            --bs-primary: #2563EB;
         }
 
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #f8f9fa;
-            color: #212529;
+            background-color: var(--slate-50);
+            color: var(--slate-900);
         }
 
         .report-container {
@@ -43,73 +49,80 @@
         }
 
         .report-header {
-            background: linear-gradient(135deg, #2b3035 0%, #212529 100%);
-            color: white;
+            background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%);
+            color: #fff;
             padding: 2rem;
-            border-radius: 1rem;
+            border-radius: 10px;
             margin-bottom: 2rem;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
         }
 
         .multi-scanner-badge {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 0.5rem 1rem;
-            border-radius: 2rem;
-            font-size: 0.9rem;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.22);
+            padding: 0.4rem 0.9rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 500;
             display: inline-block;
             margin-top: 1rem;
         }
 
         .stats-card {
-            background: white;
+            background: #fff;
             padding: 1.5rem;
-            border-radius: 0.75rem;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            border: 1px solid var(--slate-200);
+            border-radius: 10px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
             text-align: center;
             margin-bottom: 1rem;
-            transition: transform 0.2s;
-        }
-
-        .stats-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
         }
 
         .table-section {
-            background: white;
+            background: #fff;
             padding: 1.5rem;
-            border-radius: 0.75rem;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            border: 1px solid var(--slate-200);
+            border-radius: 10px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
             margin-bottom: 2rem;
         }
 
-        /* Package-type pill uses the same Bootstrap "badge bg-light" look
-           as the scanner/severity chips on the vuln report. */
         .package-type-badge {
             font-size: 0.75rem;
             padding: 0.25rem 0.6rem;
-            border-radius: 0.25rem;
-            background-color: #e9ecef;
-            color: #495057;
-            font-weight: 500;
+            border-radius: 6px;
+            background-color: #EEF2F8;
+            color: var(--slate-700);
+            font-weight: 600;
         }
 
         .license-badge {
             font-size: 0.75rem;
             padding: 0.2rem 0.5rem;
-            border-radius: 0.25rem;
-            background-color: #f1f3f5;
-            color: #6c757d;
+            border-radius: 6px;
+            background-color: var(--slate-50);
+            border: 1px solid var(--slate-200);
+            color: var(--slate-500);
             margin-right: 4px;
             display: inline-block;
         }
 
         .info-line {
-            border-left: 3px solid var(--primary-color);
+            border-left: 3px solid var(--primary);
             padding: 0.5rem 1rem;
             margin: 0.5rem 0;
-            background: #f8f9fa;
-            border-radius: 0.25rem;
+            background: var(--slate-50);
+            border-radius: 6px;
+        }
+
+        /* Monospace for versions / CPEs, matching the dashboard's data cells. */
+        code, .mono { font-family: var(--mono); font-size: 0.85em; }
+        .report-container code {
+            background: var(--slate-50);
+            border: 1px solid var(--slate-200);
+            border-radius: 4px;
+            padding: 0.05rem 0.3rem;
+            color: var(--slate-700);
         }
 
         /* Print-as-PDF view. Same approach as the vuln report: hide chrome,
@@ -119,7 +132,7 @@
             body { background: white !important; }
             .report-container { max-width: 100% !important; margin: 0 !important; padding: 0.5rem !important; }
             .report-header {
-                background: #2b3035 !important;
+                background: #0F172A !important;
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
                 page-break-after: avoid;
@@ -150,9 +163,9 @@
     <div class="report-container">
         <!-- Report Header (same shape as vuln report) -->
         <div class="report-header">
-            <div style="font-size: 2rem; font-weight: 600; margin-bottom: 0.5rem;">
+            <h1 style="font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem; color: #fff;">
                 <i class="fas fa-box"></i> Software Bill of Materials (SBOM)
-            </div>
+            </h1>
             <div style="font-size: 1.1rem; opacity: 0.9;">{{ image_name }}</div>
             <div style="margin-top: 0.5rem;">Scan ID: {{ scan_id }}</div>
             <div>Generated: {{ scan_date }}</div>
@@ -306,7 +319,7 @@
                 <tbody>
                     {% for package in packages %}
                     <tr data-type="{{ package.type }}">
-                        <td><strong>{{ package.name }}</strong></td>
+                        <td><strong class="mono">{{ package.name }}</strong></td>
                         <td><code>{{ package.version }}</code></td>
                         <td><span class="package-type-badge">{{ package.type }}</span></td>
                         <td>{{ package.language or 'N/A' }}</td>
