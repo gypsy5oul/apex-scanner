@@ -436,7 +436,7 @@ function ScanResults() {
             <Typography variant="h6" gutterBottom>
               Vulnerability Distribution
             </Typography>
-            <Box sx={{ height: 250 }}>
+            <Box sx={{ height: 300 }}>
               <VulnerabilityDoughnut vulnerabilities={result.vulnerabilities} />
             </Box>
           </Paper>
