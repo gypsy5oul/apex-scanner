@@ -27,21 +27,25 @@ import {
 } from '@mui/material';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import SearchIcon from '@mui/icons-material/Search';
-import BugReportIcon from '@mui/icons-material/BugReport';
-import InfoIcon from '@mui/icons-material/Info';
-import ZoomInIcon from '@mui/icons-material/ZoomIn';
-import ZoomOutIcon from '@mui/icons-material/ZoomOut';
+import { useTheme } from '@mui/material/styles';
+import { getSeverity, severityAccent } from '../theme/tokens';
+import SeverityChip from '../components/SeverityChip';
 import { getDependencyGraph, getPackageImpact } from '../api';
 
-const severityColors = {
-  critical: '#d32f2f',
-  high: '#f57c00',
-  medium: '#fbc02d',
-  low: '#388e3c',
-  none: '#9e9e9e',
-};
+// Mini count chip with guaranteed-contrast severity colors from tokens.
+function CountChip({ count, severity, suffix }) {
+  const t = getSeverity(severity);
+  return (
+    <Chip
+      label={`${count}${suffix}`}
+      size="small"
+      sx={{ bgcolor: t.solid, color: t.onSolid, height: 20, fontSize: '0.65rem', fontWeight: 700 }}
+    />
+  );
+}
 
 function PackageNode({ node, selected, onClick }) {
+  const theme = useTheme();
   const maxSeverity = node.critical_count > 0
     ? 'critical'
     : node.high_count > 0
@@ -49,38 +53,53 @@ function PackageNode({ node, selected, onClick }) {
       : node.vuln_count > 0
         ? 'medium'
         : 'none';
+  const borderColor = selected
+    ? theme.palette.primary.main
+    : maxSeverity === 'none'
+      ? theme.palette.divider
+      : severityAccent(maxSeverity, theme.palette.mode);
 
   return (
     <Box
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      aria-label={`${node.name} ${node.version}, ${node.vuln_count} vulnerabilities`}
       onClick={() => onClick(node)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick(node);
+        }
+      }}
       sx={{
         p: 1.5,
         border: 2,
-        borderColor: selected ? 'primary.main' : severityColors[maxSeverity],
+        borderColor,
         borderRadius: 2,
         bgcolor: selected ? 'action.selected' : 'background.paper',
         cursor: 'pointer',
-        transition: 'all 0.2s',
-        '&:hover': { transform: 'scale(1.02)', boxShadow: 2 },
+        transition: 'border-color 0.15s, box-shadow 0.15s',
+        '&:hover': { boxShadow: 2 },
         minWidth: 180,
       }}
     >
-      <Typography variant="body2" fontWeight={600} noWrap>
+      <Typography variant="body2" fontWeight={600} noWrap sx={{ fontFamily: theme.custom?.monoFont }}>
         {node.name}
       </Typography>
-      <Typography variant="caption" color="text.secondary">
+      <Typography variant="caption" color="text.secondary" sx={{ fontFamily: theme.custom?.monoFont }}>
         {node.version}
       </Typography>
       {node.vuln_count > 0 && (
         <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5, flexWrap: 'wrap' }}>
           {node.critical_count > 0 && (
-            <Chip label={`${node.critical_count}C`} size="small" sx={{ bgcolor: severityColors.critical, color: 'white', height: 20, fontSize: '0.65rem' }} />
+            <CountChip count={node.critical_count} severity="critical" suffix="C" />
           )}
           {node.high_count > 0 && (
-            <Chip label={`${node.high_count}H`} size="small" sx={{ bgcolor: severityColors.high, color: 'white', height: 20, fontSize: '0.65rem' }} />
+            <CountChip count={node.high_count} severity="high" suffix="H" />
           )}
           {(node.vuln_count - node.critical_count - node.high_count) > 0 && (
-            <Chip label={`${node.vuln_count - node.critical_count - node.high_count}M/L`} size="small" sx={{ bgcolor: severityColors.medium, color: 'black', height: 20, fontSize: '0.65rem' }} />
+            <CountChip count={node.vuln_count - node.critical_count - node.high_count} severity="medium" suffix="M/L" />
           )}
         </Box>
       )}
@@ -89,6 +108,7 @@ function PackageNode({ node, selected, onClick }) {
 }
 
 function DependencyGraph() {
+  const theme = useTheme();
   const [scanId, setScanId] = useState('');
   const [graphData, setGraphData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -221,7 +241,7 @@ function DependencyGraph() {
           <Grid item xs={6} md={3}>
             <Card variant="outlined">
               <CardContent sx={{ textAlign: 'center', py: 1.5 }}>
-                <Typography variant="h4" fontWeight={700} sx={{ color: severityColors.critical }}>{stats.criticalPackages}</Typography>
+                <Typography variant="h4" fontWeight={700} sx={{ color: severityAccent('critical', theme.palette.mode) }}>{stats.criticalPackages}</Typography>
                 <Typography variant="caption" color="text.secondary">Critical</Typography>
               </CardContent>
             </Card>
@@ -305,10 +325,10 @@ function DependencyGraph() {
                 ) : (
                   <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
                     {selectedNode.critical_count > 0 && (
-                      <Chip label={`${selectedNode.critical_count} Critical`} sx={{ bgcolor: severityColors.critical, color: 'white' }} size="small" />
+                      <SeverityChip severity="critical" count={selectedNode.critical_count} />
                     )}
                     {selectedNode.high_count > 0 && (
-                      <Chip label={`${selectedNode.high_count} High`} sx={{ bgcolor: severityColors.high, color: 'white' }} size="small" />
+                      <SeverityChip severity="high" count={selectedNode.high_count} />
                     )}
                   </Box>
                 )}
@@ -327,22 +347,13 @@ function DependencyGraph() {
                       <TableBody>
                         {selectedNode.vulnerabilities.map((v, i) => (
                           <TableRow key={i}>
-                            <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                            <TableCell sx={{ fontFamily: theme.custom?.monoFont, fontSize: '0.75rem' }}>
                               {v.id || v.cve_id || 'N/A'}
                             </TableCell>
                             <TableCell>
-                              <Chip
-                                label={v.severity || 'unknown'}
-                                size="small"
-                                sx={{
-                                  bgcolor: severityColors[(v.severity || '').toLowerCase()] || severityColors.none,
-                                  color: 'white',
-                                  height: 20,
-                                  fontSize: '0.65rem',
-                                }}
-                              />
+                              <SeverityChip severity={v.severity} />
                             </TableCell>
-                            <TableCell sx={{ fontSize: '0.75rem' }}>
+                            <TableCell sx={{ fontSize: '0.75rem', fontFamily: theme.custom?.monoFont }}>
                               {v.fix_version || v.fixedInVersion || '-'}
                             </TableCell>
                           </TableRow>

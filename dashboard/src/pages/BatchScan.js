@@ -10,6 +10,7 @@ import {
   CircularProgress,
   Chip,
   IconButton,
+  alpha,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -193,12 +194,15 @@ function BatchScan() {
                     alignItems: 'center',
                     p: 1,
                     mb: 1,
-                    backgroundColor:
-                      scan.status === 'completed'
-                        ? '#e8f5e9'
-                        : scan.status === 'failed'
-                        ? '#ffebee'
-                        : '#fff3e0',
+                    backgroundColor: (theme) =>
+                      alpha(
+                        scan.status === 'completed'
+                          ? theme.palette.success.main
+                          : scan.status === 'failed'
+                          ? theme.palette.error.main
+                          : theme.palette.warning.main,
+                        0.12
+                      ),
                     borderRadius: 1,
                   }}
                 >

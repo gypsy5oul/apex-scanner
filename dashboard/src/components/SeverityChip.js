@@ -1,28 +1,39 @@
 import React from 'react';
 import { Chip } from '@mui/material';
+import { getSeverity } from '../theme/tokens';
 
-const severityColors = {
-  critical: { bg: '#d32f2f', color: '#fff' },
-  high: { bg: '#f57c00', color: '#fff' },
-  medium: { bg: '#fbc02d', color: '#000' },
-  low: { bg: '#388e3c', color: '#fff' },
-  negligible: { bg: '#9e9e9e', color: '#fff' },
-  unknown: { bg: '#757575', color: '#fff' },
-};
+// Severity badge — the product's primary visual signal.
+// Colors come from the central token scale (AA-contrast, dark-mode aware).
+// Renders the severity name as text (never color-only) so it remains
+// readable for color-blind users and screen readers.
+function SeverityChip({ severity, count, size = 'small', variant = 'filled' }) {
+  const token = getSeverity(severity);
+  const label =
+    count !== undefined ? `${token.label}: ${count}` : token.label;
 
-function SeverityChip({ severity, count }) {
-  const sev = severity?.toLowerCase() || 'unknown';
-  const colors = severityColors[sev] || severityColors.unknown;
+  const filledSx = {
+    backgroundColor: token.solid,
+    color: token.onSolid,
+    fontWeight: 700,
+    letterSpacing: '0.01em',
+    '& .MuiChip-label': { fontVariantNumeric: 'tabular-nums' },
+  };
 
   return (
     <Chip
-      label={count !== undefined ? `${severity}: ${count}` : severity}
-      size="small"
-      sx={{
-        backgroundColor: colors.bg,
-        color: colors.color,
-        fontWeight: 'bold',
-      }}
+      label={label}
+      size={size}
+      variant={variant === 'outlined' ? 'outlined' : 'filled'}
+      aria-label={
+        count !== undefined
+          ? `${token.label} severity, ${count}`
+          : `${token.label} severity`
+      }
+      sx={
+        variant === 'outlined'
+          ? { borderColor: token.solid, color: token.solid, fontWeight: 700 }
+          : filledSx
+      }
     />
   );
 }

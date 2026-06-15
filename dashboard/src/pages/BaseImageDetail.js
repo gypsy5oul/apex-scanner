@@ -27,6 +27,7 @@ import {
   Tooltip,
   LinearProgress,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import {
   ArrowBack,
   Edit,
@@ -55,6 +56,7 @@ import {
 } from '../api';
 
 function BaseImageDetail() {
+  const theme = useTheme();
   const { imageName, tag } = useParams();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -353,10 +355,10 @@ function BaseImageDetail() {
                   <YAxis />
                   <RechartsTooltip />
                   <Legend />
-                  <Line type="monotone" dataKey="Critical" stroke="#d32f2f" strokeWidth={2} />
-                  <Line type="monotone" dataKey="High" stroke="#ed6c02" strokeWidth={2} />
-                  <Line type="monotone" dataKey="Medium" stroke="#0288d1" strokeWidth={2} />
-                  <Line type="monotone" dataKey="Low" stroke="#2e7d32" strokeWidth={2} />
+                  <Line type="monotone" dataKey="Critical" stroke={theme.palette.severity.critical} strokeWidth={2} />
+                  <Line type="monotone" dataKey="High" stroke={theme.palette.severity.high} strokeWidth={2} />
+                  <Line type="monotone" dataKey="Medium" stroke={theme.palette.severity.medium} strokeWidth={2} />
+                  <Line type="monotone" dataKey="Low" stroke={theme.palette.severity.low} strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </Box>

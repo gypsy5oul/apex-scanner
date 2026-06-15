@@ -41,6 +41,8 @@ import GppMaybeIcon from '@mui/icons-material/GppMaybe';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import GavelIcon from '@mui/icons-material/Gavel';
+import { useTheme, alpha } from '@mui/material/styles';
+import { getSeverity, severityAccent } from '../theme/tokens';
 import {
   getScanResult,
   getDependencyGraph,
@@ -97,7 +99,11 @@ const downloadFile = async (url, filename) => {
   }
 };
 
+// Map a risk/category label to a severity token (guaranteed-contrast solid color).
+const RISK_SEVERITY = { critical: 'critical', high: 'high', medium: 'medium', low: 'low' };
+
 function ScanResults() {
+  const theme = useTheme();
   const { scanId } = useParams();
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -676,7 +682,7 @@ function ScanResults() {
                     ) : riskScore ? (
                       <Grid container spacing={3}>
                         <Grid item xs={12} md={4}>
-                          <Card sx={{ bgcolor: riskScore.overall_risk_level === 'critical' ? 'error.dark' : riskScore.overall_risk_level === 'high' ? 'error.main' : riskScore.overall_risk_level === 'medium' ? 'warning.main' : 'success.main', color: 'white' }}>
+                          <Card sx={{ bgcolor: getSeverity(RISK_SEVERITY[riskScore.overall_risk_level] || 'low').solid, color: '#fff', border: 'none' }}>
                             <CardContent sx={{ textAlign: 'center' }}>
                               <Typography variant="h2" fontWeight="bold">
                                 {riskScore.overall_risk_score?.toFixed(1) || 0}
@@ -757,7 +763,7 @@ function ScanResults() {
                         <Grid item xs={12}>
                           <Grid container spacing={2}>
                             <Grid item xs={12} sm={4}>
-                              <Card sx={{ bgcolor: kevMatches?.total_kev_matches > 0 ? 'error.main' : 'success.main', color: 'white' }}>
+                              <Card sx={{ bgcolor: getSeverity(kevMatches?.total_kev_matches > 0 ? 'critical' : 'low').solid, color: '#fff', border: 'none' }}>
                                 <CardContent sx={{ textAlign: 'center' }}>
                                   <GppMaybeIcon sx={{ fontSize: 40, mb: 1 }} />
                                   <Typography variant="h3" fontWeight="bold">
@@ -770,7 +776,7 @@ function ScanResults() {
                               </Card>
                             </Grid>
                             <Grid item xs={12} sm={4}>
-                              <Card sx={{ bgcolor: 'warning.main', color: 'white' }}>
+                              <Card sx={{ bgcolor: getSeverity('medium').solid, color: '#fff', border: 'none' }}>
                                 <CardContent sx={{ textAlign: 'center' }}>
                                   <TrendingUpIcon sx={{ fontSize: 40, mb: 1 }} />
                                   <Typography variant="h3" fontWeight="bold">
@@ -783,7 +789,7 @@ function ScanResults() {
                               </Card>
                             </Grid>
                             <Grid item xs={12} sm={4}>
-                              <Card sx={{ bgcolor: 'info.main', color: 'white' }}>
+                              <Card sx={{ bgcolor: theme.palette.primary.dark, color: '#fff', border: 'none' }}>
                                 <CardContent sx={{ textAlign: 'center' }}>
                                   <SecurityIcon sx={{ fontSize: 40, mb: 1 }} />
                                   <Typography variant="h3" fontWeight="bold">
@@ -801,9 +807,9 @@ function ScanResults() {
                         {/* KEV Vulnerabilities */}
                         {kevMatches?.total_kev_matches > 0 && (
                           <Grid item xs={12}>
-                            <Alert severity="error" sx={{ mb: 2 }}>
+                            <Alert severity="error" icon={<WarningIcon />} sx={{ mb: 2 }}>
                               <Typography variant="subtitle2" fontWeight="bold">
-                                ⚠️ CISA Known Exploited Vulnerabilities Found - Immediate Action Required
+                                CISA Known Exploited Vulnerabilities Found - Immediate Action Required
                               </Typography>
                             </Alert>
                             <TableContainer component={Paper} variant="outlined">
@@ -819,7 +825,7 @@ function ScanResults() {
                                 </TableHead>
                                 <TableBody>
                                   {kevMatches?.vulnerabilities?.map((vuln, idx) => (
-                                    <TableRow key={idx} sx={{ bgcolor: 'error.light' }}>
+                                    <TableRow key={idx} sx={{ bgcolor: (t) => alpha(t.palette.error.main, t.palette.mode === 'dark' ? 0.12 : 0.06) }}>
                                       <TableCell>
                                         <Link
                                           href={`https://nvd.nist.gov/vuln/detail/${vuln.id}`}
@@ -1249,19 +1255,19 @@ function ScanResults() {
                               <Typography variant="h6" gutterBottom>License Categories</Typography>
                               <Grid container spacing={2} sx={{ mb: 3 }}>
                                 {[
-                                  { key: 'network_copyleft', label: 'Network Copyleft', subtitle: 'AGPL / SSPL', color: '#dc3545' },
-                                  { key: 'source_available', label: 'Source-Available', subtitle: 'BSL / Elastic / Commons', color: '#fd7e14' },
-                                  { key: 'strong_copyleft',  label: 'Strong Copyleft',  subtitle: 'GPL / EPL / OSL',     color: '#fd7e14' },
-                                  { key: 'proprietary',      label: 'Proprietary',      subtitle: 'Commercial / closed',  color: '#fd7e14' },
-                                  { key: 'weak_copyleft',    label: 'Weak Copyleft',    subtitle: 'LGPL / MPL / CDDL',    color: '#ffc107' },
-                                  { key: 'unknown',          label: 'Unknown / Unparsed', subtitle: 'Review needed',     color: '#6c757d' },
-                                  { key: 'permissive',       label: 'Permissive',       subtitle: 'MIT / BSD / Apache',  color: '#198754' },
+                                  { key: 'network_copyleft', label: 'Network Copyleft', subtitle: 'AGPL / SSPL', sev: 'critical' },
+                                  { key: 'source_available', label: 'Source-Available', subtitle: 'BSL / Elastic / Commons', sev: 'high' },
+                                  { key: 'strong_copyleft',  label: 'Strong Copyleft',  subtitle: 'GPL / EPL / OSL',     sev: 'high' },
+                                  { key: 'proprietary',      label: 'Proprietary',      subtitle: 'Commercial / closed',  sev: 'high' },
+                                  { key: 'weak_copyleft',    label: 'Weak Copyleft',    subtitle: 'LGPL / MPL / CDDL',    sev: 'medium' },
+                                  { key: 'unknown',          label: 'Unknown / Unparsed', subtitle: 'Review needed',     sev: 'negligible' },
+                                  { key: 'permissive',       label: 'Permissive',       subtitle: 'MIT / BSD / Apache',  sev: 'low' },
                                 ].filter(c => (counts[c.key] || 0) > 0 || c.key === 'permissive').map(c => (
                                   <Grid item xs={6} sm={4} md={3} key={c.key}>
-                                    <Card sx={{ borderLeft: `4px solid ${c.color}` }}>
+                                    <Card sx={{ borderLeft: `4px solid ${severityAccent(c.sev, theme.palette.mode)}` }}>
                                       <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                                         <Typography variant="caption" color="text.secondary">{c.label}</Typography>
-                                        <Typography variant="h4" sx={{ color: c.color, fontWeight: 700 }}>
+                                        <Typography variant="h4" sx={{ color: getSeverity(c.sev).solid, fontWeight: 700 }}>
                                           {counts[c.key] || 0}
                                         </Typography>
                                         <Typography variant="caption" color="text.secondary">{c.subtitle}</Typography>

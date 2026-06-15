@@ -5,7 +5,6 @@ import {
   Typography,
   Button,
   TextField,
-  Grid,
   Chip,
   Table,
   TableBody,
@@ -32,7 +31,6 @@ import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import UploadIcon from '@mui/icons-material/Upload';
-import DownloadIcon from '@mui/icons-material/Download';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import {
@@ -388,6 +386,7 @@ function VexManagement() {
                           <Tooltip title="Edit">
                             <IconButton
                               size="small"
+                              aria-label={`Edit VEX statement for ${stmt.cve_id}`}
                               onClick={() => { setEditData(stmt); setDialogOpen(true); }}
                             >
                               <EditIcon fontSize="small" />
@@ -397,6 +396,7 @@ function VexManagement() {
                             <IconButton
                               size="small"
                               color="error"
+                              aria-label={`Delete VEX statement for ${stmt.cve_id}`}
                               onClick={() => handleDelete(stmt.id)}
                             >
                               <DeleteIcon fontSize="small" />

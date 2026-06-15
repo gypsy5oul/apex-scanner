@@ -15,7 +15,9 @@ import {
   ListItemIcon,
   ListItemText,
   Collapse,
+  alpha,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import PriorityHighIcon from '@mui/icons-material/PriorityHigh';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
@@ -26,34 +28,33 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { getAiTriage, getAiRemediation, getAiTriageStatus } from '../api';
 
+// `color` maps to a semantic palette slot; the tonal background is derived
+// from it at render time so it stays correct in both light and dark mode.
 const classificationConfig = {
   critical_action: {
     color: 'error',
     icon: <PriorityHighIcon />,
     label: 'Critical Action Required',
-    bgcolor: '#fce4ec',
   },
   high_priority: {
     color: 'warning',
     icon: <WarningAmberIcon />,
     label: 'High Priority',
-    bgcolor: '#fff3e0',
   },
   monitor: {
     color: 'info',
     icon: <CheckCircleOutlineIcon />,
     label: 'Monitor',
-    bgcolor: '#e3f2fd',
   },
   accept_risk: {
     color: 'success',
     icon: <CheckCircleOutlineIcon />,
     label: 'Accept Risk',
-    bgcolor: '#e8f5e9',
   },
 };
 
 function AITriagePanel({ scanId }) {
+  const theme = useTheme();
   const [triage, setTriage] = useState(null);
   const [remediation, setRemediation] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -173,7 +174,10 @@ function AITriagePanel({ scanId }) {
             sx={{
               p: 3,
               mb: 3,
-              bgcolor: config?.bgcolor || '#f5f5f5',
+              bgcolor: alpha(
+                theme.palette[config?.color]?.main || theme.palette.grey[500],
+                theme.palette.mode === 'dark' ? 0.16 : 0.08
+              ),
               border: 2,
               borderColor: `${config?.color || 'grey'}.main`,
             }}
@@ -251,7 +255,7 @@ function AITriagePanel({ scanId }) {
 
           {/* Exploit Context */}
           {triage.exploit_context && (
-            <Paper sx={{ p: 2, mb: 3, bgcolor: 'grey.50' }}>
+            <Paper sx={{ p: 2, mb: 3, bgcolor: 'action.hover' }}>
               <Typography variant="subtitle2" gutterBottom>Exploit Context</Typography>
               <Typography variant="body2" color="text.secondary">
                 {triage.exploit_context}
@@ -284,6 +288,7 @@ function AITriagePanel({ scanId }) {
             }}
             endIcon={showRemediation ? <ExpandLessIcon /> : <ExpandMoreIcon />}
             startIcon={<AutoFixHighIcon />}
+            aria-expanded={showRemediation}
           >
             AI Remediation Guide
           </Button>
@@ -319,15 +324,15 @@ function AITriagePanel({ scanId }) {
                   <Box sx={{ mb: 2 }}>
                     <Typography variant="subtitle2">Package Updates:</Typography>
                     {remediation.package_updates.map((pkg, i) => (
-                      <Box key={i} sx={{ ml: 2, mb: 1, p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
-                        <Typography variant="body2" fontWeight={600}>
+                      <Box key={i} sx={{ ml: 2, mb: 1, p: 1, bgcolor: 'action.hover', borderRadius: 1 }}>
+                        <Typography variant="body2" fontWeight={600} sx={{ fontFamily: theme.custom?.monoFont }}>
                           {pkg.package}: {pkg.current} → {pkg.target}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
                           Fixes {pkg.cves_fixed} CVEs
                         </Typography>
                         {pkg.command && (
-                          <Typography variant="caption" display="block" sx={{ fontFamily: 'monospace', mt: 0.5 }}>
+                          <Typography variant="caption" display="block" sx={{ fontFamily: theme.custom?.monoFont, mt: 0.5 }}>
                             $ {pkg.command}
                           </Typography>
                         )}

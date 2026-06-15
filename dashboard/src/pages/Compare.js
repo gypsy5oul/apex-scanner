@@ -16,6 +16,7 @@ import {
   TableHead,
   TableRow,
   Divider,
+  alpha,
 } from '@mui/material';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import AddCircleIcon from '@mui/icons-material/AddCircle';
@@ -118,7 +119,7 @@ function Compare() {
           {/* Summary */}
           <Grid container spacing={3} sx={{ mb: 3 }}>
             <Grid item xs={12} md={4}>
-              <Paper sx={{ p: 3, backgroundColor: '#e8f5e9' }}>
+              <Paper sx={{ p: 3, backgroundColor: (theme) => alpha(theme.palette.success.main, 0.12) }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
                   <RemoveCircleIcon color="success" />
                   <Typography variant="h6">Fixed</Typography>
@@ -132,7 +133,7 @@ function Compare() {
               </Paper>
             </Grid>
             <Grid item xs={12} md={4}>
-              <Paper sx={{ p: 3, backgroundColor: '#ffebee' }}>
+              <Paper sx={{ p: 3, backgroundColor: (theme) => alpha(theme.palette.error.main, 0.12) }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
                   <AddCircleIcon color="error" />
                   <Typography variant="h6">New</Typography>
@@ -146,7 +147,7 @@ function Compare() {
               </Paper>
             </Grid>
             <Grid item xs={12} md={4}>
-              <Paper sx={{ p: 3, backgroundColor: '#e3f2fd' }}>
+              <Paper sx={{ p: 3, backgroundColor: (theme) => alpha(theme.palette.info.main, 0.12) }}>
                 <Typography variant="h6" sx={{ mb: 1 }}>
                   Unchanged
                 </Typography>

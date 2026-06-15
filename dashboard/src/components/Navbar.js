@@ -7,7 +7,6 @@ import {
   Box,
   Chip,
   Tooltip,
-  Badge,
   Avatar,
   alpha,
 } from '@mui/material';
@@ -90,6 +89,7 @@ function Navbar({ onMenuClick }) {
           <Tooltip title={mode === 'dark' ? 'Light mode' : 'Dark mode'}>
             <IconButton
               onClick={toggleTheme}
+              aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
               sx={{
                 color: 'text.primary',
                 bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
@@ -105,6 +105,7 @@ function Navbar({ onMenuClick }) {
           {/* Notifications */}
           <Tooltip title="Notifications">
             <IconButton
+              aria-label="Notifications"
               sx={{
                 color: 'text.primary',
                 bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
@@ -113,9 +114,7 @@ function Navbar({ onMenuClick }) {
                 },
               }}
             >
-              <Badge badgeContent={3} color="error">
-                <NotificationsIcon />
-              </Badge>
+              <NotificationsIcon />
             </IconButton>
           </Tooltip>
 

@@ -21,6 +21,7 @@ import {
   Collapse,
   IconButton,
   LinearProgress,
+  alpha,
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -69,6 +70,17 @@ function ControlItem({ control }) {
       }}
     >
       <Box
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-label={`${control.control_id} ${control.title}, ${control.status}`}
+        onClick={() => setExpanded(!expanded)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setExpanded(!expanded);
+          }
+        }}
         sx={{
           display: 'flex',
           alignItems: 'center',
@@ -76,7 +88,6 @@ function ControlItem({ control }) {
           cursor: 'pointer',
           '&:hover': { bgcolor: 'action.hover' },
         }}
-        onClick={() => setExpanded(!expanded)}
       >
         <ListItemIcon sx={{ minWidth: 36 }}>
           <StatusIcon status={control.status} />
@@ -92,7 +103,7 @@ function ControlItem({ control }) {
           }
           secondary={control.description}
         />
-        <IconButton size="small">
+        <IconButton size="small" tabIndex={-1} aria-hidden sx={{ pointerEvents: 'none' }}>
           {expanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
         </IconButton>
       </Box>
@@ -176,24 +187,26 @@ function FrameworkCard({ framework, result, onExpand }) {
             </Box>
 
             <Grid container spacing={1}>
-              <Grid item xs={4}>
-                <Box sx={{ textAlign: 'center', p: 1, borderRadius: 1, bgcolor: 'success.main', color: 'white' }}>
-                  <Typography variant="h6" fontWeight={700}>{result.controls_passed}</Typography>
-                  <Typography variant="caption">Passed</Typography>
-                </Box>
-              </Grid>
-              <Grid item xs={4}>
-                <Box sx={{ textAlign: 'center', p: 1, borderRadius: 1, bgcolor: 'error.main', color: 'white' }}>
-                  <Typography variant="h6" fontWeight={700}>{result.controls_failed}</Typography>
-                  <Typography variant="caption">Failed</Typography>
-                </Box>
-              </Grid>
-              <Grid item xs={4}>
-                <Box sx={{ textAlign: 'center', p: 1, borderRadius: 1, bgcolor: 'warning.main', color: 'white' }}>
-                  <Typography variant="h6" fontWeight={700}>{result.controls_warning}</Typography>
-                  <Typography variant="caption">Warning</Typography>
-                </Box>
-              </Grid>
+              {[
+                { value: result.controls_passed, label: 'Passed', color: 'success' },
+                { value: result.controls_failed, label: 'Failed', color: 'error' },
+                { value: result.controls_warning, label: 'Warning', color: 'warning' },
+              ].map((stat) => (
+                <Grid item xs={4} key={stat.label}>
+                  <Box
+                    sx={{
+                      textAlign: 'center',
+                      p: 1,
+                      borderRadius: 1,
+                      bgcolor: (theme) => alpha(theme.palette[stat.color].main, 0.12),
+                      color: `${stat.color}.main`,
+                    }}
+                  >
+                    <Typography variant="h6" fontWeight={700}>{stat.value}</Typography>
+                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>{stat.label}</Typography>
+                  </Box>
+                </Grid>
+              ))}
             </Grid>
           </>
         )}

@@ -154,16 +154,14 @@ function Sidebar({ mobileOpen, onClose, drawerWidth }) {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: (theme) =>
-                `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
-              borderRadius: 2,
-              boxShadow: '0 4px 12px rgba(25, 118, 210, 0.3)',
+              bgcolor: 'primary.main',
+              borderRadius: 1.5,
             }}
           >
             <ChangeHistoryIcon
               sx={{
-                fontSize: 28,
-                color: '#fff',
+                fontSize: 24,
+                color: 'primary.contrastText',
               }}
             />
           </Box>
@@ -173,10 +171,8 @@ function Sidebar({ mobileOpen, onClose, drawerWidth }) {
               sx={{
                 fontWeight: 700,
                 lineHeight: 1.2,
-                background: (theme) =>
-                  `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
+                letterSpacing: '-0.01em',
+                color: 'text.primary',
               }}
             >
               Apex Scanner

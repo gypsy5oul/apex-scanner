@@ -16,12 +16,12 @@ import {
   Divider,
   alpha,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import SecurityIcon from '@mui/icons-material/Security';
 import BugReportIcon from '@mui/icons-material/BugReport';
 import InventoryIcon from '@mui/icons-material/Inventory';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -30,59 +30,44 @@ import ErrorIcon from '@mui/icons-material/Error';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import { getStats, healthCheck, getRecentScans } from '../api';
 
-function StatCard({ title, value, subtitle, icon, color, trend, trendLabel }) {
+function StatCard({ title, value, subtitle, icon, color }) {
   return (
     <Card
       sx={{
         height: '100%',
-        position: 'relative',
-        overflow: 'visible',
+        transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
         '&:hover': {
-          transform: 'translateY(-2px)',
-          transition: 'transform 0.2s ease-in-out',
+          borderColor: alpha(color, 0.5),
         },
       }}
     >
-      <CardContent sx={{ p: 3 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+      <CardContent sx={{ p: 2.5 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
+          {/* Flat tonal tile — no gradient/glow (enterprise data-dense look) */}
           <Box
             sx={{
-              width: 48,
-              height: 48,
-              borderRadius: 2,
+              width: 40,
+              height: 40,
+              borderRadius: 1.5,
+              flexShrink: 0,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: `linear-gradient(135deg, ${color} 0%, ${alpha(color, 0.7)} 100%)`,
-              boxShadow: `0 4px 14px ${alpha(color, 0.4)}`,
+              bgcolor: alpha(color, 0.12),
             }}
           >
-            {React.cloneElement(icon, { sx: { color: 'white', fontSize: 24 } })}
+            {React.cloneElement(icon, { sx: { color, fontSize: 22 } })}
           </Box>
-          {trend !== undefined && (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-              {trend >= 0 ? (
-                <TrendingUpIcon sx={{ fontSize: 18, color: trend >= 0 ? 'error.main' : 'success.main' }} />
-              ) : (
-                <TrendingDownIcon sx={{ fontSize: 18, color: 'success.main' }} />
-              )}
-              <Typography
-                variant="caption"
-                sx={{
-                  color: trend >= 0 ? 'error.main' : 'success.main',
-                  fontWeight: 600,
-                }}
-              >
-                {trend >= 0 ? '+' : ''}{trend}%
-              </Typography>
-            </Box>
-          )}
+          <Typography
+            variant="overline"
+            color="text.secondary"
+            sx={{ lineHeight: 1.2 }}
+          >
+            {title}
+          </Typography>
         </Box>
-        <Typography variant="h3" fontWeight={700} sx={{ mb: 0.5 }}>
+        <Typography variant="h3" fontWeight={700} sx={{ mb: 0.25, fontVariantNumeric: 'tabular-nums' }}>
           {value}
-        </Typography>
-        <Typography variant="body2" color="text.secondary" fontWeight={500}>
-          {title}
         </Typography>
         {subtitle && (
           <Typography variant="caption" color="text.disabled">
@@ -95,17 +80,30 @@ function StatCard({ title, value, subtitle, icon, color, trend, trendLabel }) {
 }
 
 function SeverityBar({ critical, high, medium, low }) {
+  const theme = useTheme();
+  const sev = theme.palette.severity; // mode-aware accents from tokens
   const total = critical + high + medium + low || 1;
   const segments = [
-    { value: critical, color: '#d32f2f', label: 'Critical' },
-    { value: high, color: '#f57c00', label: 'High' },
-    { value: medium, color: '#ffc107', label: 'Medium' },
-    { value: low, color: '#4caf50', label: 'Low' },
+    { value: critical, color: sev.critical, label: 'Critical' },
+    { value: high, color: sev.high, label: 'High' },
+    { value: medium, color: sev.medium, label: 'Medium' },
+    { value: low, color: sev.low, label: 'Low' },
   ];
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', height: 8, borderRadius: 1, overflow: 'hidden', mb: 1 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          height: 8,
+          borderRadius: 1,
+          overflow: 'hidden',
+          mb: 1,
+          bgcolor: 'action.hover',
+        }}
+        role="img"
+        aria-label={`Critical ${critical}, High ${high}, Medium ${medium}, Low ${low}`}
+      >
         {segments.map((seg, idx) => (
           <Box
             key={idx}
@@ -122,7 +120,7 @@ function SeverityBar({ critical, high, medium, low }) {
           <Box key={idx} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: seg.color }} />
             <Typography variant="caption" color="text.secondary">
-              {seg.label}: <strong>{seg.value}</strong>
+              {seg.label}: <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{seg.value}</strong>
             </Typography>
           </Box>
         ))}
@@ -265,7 +263,6 @@ function Dashboard() {
             subtitle="Recent scans"
             icon={<ErrorIcon />}
             color="#f44336"
-            trend={5}
           />
         </Grid>
         <Grid item xs={12} sm={6} lg={3}>
