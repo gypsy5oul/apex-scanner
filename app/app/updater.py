@@ -296,12 +296,6 @@ class UpdateService:
 
             success = result.returncode == 0
 
-            # `grype db update` leaves leftover `grype-db-download<rand>` dirs
-            # (~1.5GB each) in the cache. Without cleanup, a worker running
-            # for weeks accumulates hundreds of them and fills the disk.
-            if success:
-                self._cleanup_stale_grype_downloads()
-
             # Get DB info after update
             db_info = self._get_grype_db_info()
 
@@ -353,6 +347,12 @@ class UpdateService:
                 "error": str(e),
                 "timestamp": now_iso()
             }
+        finally:
+            # ALWAYS clean up the leftover `grype-db-download<rand>` dirs
+            # (~1.5GB each), even when the update fails or times out — a
+            # failed/timed-out `grype db update` is exactly the case that
+            # previously leaked ~229GB and filled the disk.
+            self._cleanup_stale_grype_downloads()
 
     @staticmethod
     def _cleanup_stale_grype_downloads() -> None:
@@ -380,42 +380,42 @@ class UpdateService:
 
     def update_trivy_db(self) -> Dict[str, Any]:
         """
-        Update Trivy vulnerability database AND the Java DB.
+        Update Trivy vulnerability DB AND Java DB into the shared cache
+        WITHOUT a visible gap for concurrent scans.
 
-        Trivy has its own internal cache TTL (24h on the vuln DB, 3 days on
-        the Java DB) and will silently skip a download if it thinks the
-        cache is still fresh. We bypass that by clearing the cache first,
-        so manual UI triggers and scheduled refreshes both actually re-pull.
+        The previous approach ran `trivy clean` to defeat Trivy's internal
+        cache-TTL gate, but on the shared bind-mounted cache that deletes the
+        DB out from under any worker scanning at that moment, causing
+        transient "DB not found" failures. Instead we download into a private
+        temp cache dir (empty → no TTL to skip past, always pulls fresh) and
+        then atomically os.replace() each resulting DB file into the live
+        shared cache. os.replace() is an atomic same-filesystem rename, so a
+        concurrent scan always sees a complete DB — never a missing one.
 
         Returns:
             Update status
         """
+        import tempfile
+
         logger.info("Starting Trivy database update")
 
+        live_cache = os.environ.get("TRIVY_CACHE_DIR", "/home/scanner/.cache/trivy")
+        # The temp cache MUST live on the same filesystem as the shared cache
+        # so the swap is a real atomic rename (not a cross-device EXDEV copy).
+        # The shared cache is a bind mount, so we create the temp dir *inside*
+        # it rather than under the container-overlay parent.
+        os.makedirs(live_cache, exist_ok=True)
+        tmp_cache = tempfile.mkdtemp(prefix=".db-refresh-", dir=live_cache)
+
         try:
-            # Step 1: clear the local cache so Trivy can't fall back to
-            # "cache is still fresh per my TTL window, nothing to do".
-            subprocess.run(
-                ["trivy", "clean", "--vuln-db", "--java-db"],
-                capture_output=True, text=True, timeout=60,
-            )
-
-            # Step 2: download the vulnerability DB.
+            # Download vuln DB + Java DB into the private temp cache.
             result = subprocess.run(
-                ["trivy", "image", "--download-db-only"],
-                capture_output=True,
-                text=True,
-                timeout=300
+                ["trivy", "image", "--cache-dir", tmp_cache, "--download-db-only"],
+                capture_output=True, text=True, timeout=300,
             )
-
-            # Step 3: download the Java DB too — netty/Maven CVEs live here.
-            # If this fails we still consider the vuln-DB refresh a success
-            # so the overall task is not marked failed for a Java DB hiccup.
             java_result = subprocess.run(
-                ["trivy", "image", "--download-java-db-only"],
-                capture_output=True,
-                text=True,
-                timeout=600,
+                ["trivy", "image", "--cache-dir", tmp_cache, "--download-java-db-only"],
+                capture_output=True, text=True, timeout=600,
             )
             if java_result.returncode != 0:
                 logger.warning(
@@ -424,6 +424,11 @@ class UpdateService:
                 )
 
             success = result.returncode == 0
+
+            # Atomically swap each freshly-downloaded file into the live cache.
+            if success:
+                swapped = self._atomic_swap_trivy_files(tmp_cache, live_cache)
+                logger.info("Trivy DB files swapped into shared cache", swapped=swapped)
 
             update_record = {
                 "tool": "trivy",
@@ -457,6 +462,33 @@ class UpdateService:
                 "error": str(e),
                 "timestamp": now_iso()
             }
+        finally:
+            shutil.rmtree(tmp_cache, ignore_errors=True)
+
+    @staticmethod
+    def _atomic_swap_trivy_files(src_cache: str, dst_cache: str) -> int:
+        """os.replace() each downloaded Trivy DB file from src into dst.
+
+        Operates on the `db/` and `java-db/` subdirs. os.replace() on a file
+        is atomic on POSIX same-filesystem renames — the destination path
+        always resolves to either the old or the new file, never to nothing —
+        so a scan reading the shared cache mid-swap can't see a missing DB.
+        Returns the number of files swapped.
+        """
+        swapped = 0
+        for subdir in ("db", "java-db"):
+            src_dir = os.path.join(src_cache, subdir)
+            dst_dir = os.path.join(dst_cache, subdir)
+            if not os.path.isdir(src_dir):
+                continue
+            os.makedirs(dst_dir, exist_ok=True)
+            for fname in os.listdir(src_dir):
+                sp = os.path.join(src_dir, fname)
+                dp = os.path.join(dst_dir, fname)
+                if os.path.isfile(sp):
+                    os.replace(sp, dp)  # atomic same-fs rename
+                    swapped += 1
+        return swapped
 
     def _get_grype_db_info(self) -> Dict[str, Any]:
         """Get Grype database information"""

@@ -401,22 +401,32 @@ async def get_current_user(
         if token_data:
             return token_data
 
-    # Try HTTP Basic Auth (supports curl -u user:pass)
+    # Try HTTP Basic Auth (supports curl -u user:pass). This path goes
+    # through the SAME IP rate-limit + lockout as /login, otherwise an
+    # attacker could brute-force the bcrypt password unthrottled by hitting
+    # any authenticated endpoint with `curl -u`.
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("basic "):
+        client_ip = request.client.host if request.client else "unknown"
+        check_rate_limit(client_ip)  # raises 429 once locked out
         try:
             decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
             username, password = decoded.split(":", 1)
             role = authenticate_user(username, password)
             if role:
+                clear_login_attempts(client_ip)
                 return TokenData(
                     username=username,
                     role=role,
                     exp=datetime.now(timezone.utc) + timedelta(hours=1),
                     auth_method="basic",
                 )
+            # Credentials present but wrong — count it toward lockout.
+            logger.warning("Failed Basic Auth attempt", username=username, client_ip=client_ip)
+            record_failed_login(client_ip)
         except (ValueError, UnicodeDecodeError):
-            pass
+            # Malformed Basic header also counts as a failed attempt.
+            record_failed_login(client_ip)
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -469,22 +479,31 @@ async def get_optional_admin(
         if token_data:
             return token_data
 
-    # Try HTTP Basic Auth
+    # Try HTTP Basic Auth — same IP rate-limit + lockout as /login.
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("basic "):
+        client_ip = request.client.host if request.client else "unknown"
+        try:
+            check_rate_limit(client_ip)  # raises 429 once locked out
+        except HTTPException:
+            raise
         try:
             decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
             username, password = decoded.split(":", 1)
             role = authenticate_user(username, password)
             if role:
+                clear_login_attempts(client_ip)
                 return TokenData(
                     username=username,
                     role=role,
                     exp=datetime.now(timezone.utc) + timedelta(hours=1),
                     auth_method="basic",
                 )
+            record_failed_login(client_ip)
+        except HTTPException:
+            raise
         except (ValueError, UnicodeDecodeError):
-            pass
+            record_failed_login(client_ip)
 
     return None
 

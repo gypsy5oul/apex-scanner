@@ -302,14 +302,83 @@ class ScannerOrchestrator:
     # Vulnerability deduplication & counting helpers
     # ------------------------------------------------------------------
 
+    # Severity rank for picking the worst across two scanners (lower = worse).
+    _SEVERITY_RANK = {
+        "critical": 0, "high": 1, "medium": 2,
+        "low": 3, "negligible": 4, "unknown": 5,
+    }
+
+    def _dedup_key(self, v: Dict) -> str:
+        """Build a stable dedup key, tolerating missing fields.
+
+        Returns "" for entries with no usable CVE id so the caller can skip
+        them rather than collapsing every id-less vuln into one bucket.
+        """
+        vid = (v.get("id") or "").strip()
+        pkg = (v.get("package_name") or "").strip()
+        if not vid or vid.upper() in ("N/A", "UNKNOWN", ""):
+            return ""
+        return f"{vid}:{pkg}"
+
+    def _merge_both(self, grype_v: Dict, trivy_v: Dict) -> Dict:
+        """Merge a vuln found by BOTH scanners, keeping the strongest signal.
+
+        Grype's record is the base, but fix data and severity/CVSS are unioned
+        with Trivy's so that a fix or higher score known to *either* scanner is
+        reflected. This is what prevents the "Grype says no-fix, Trivy has the
+        fix" understatement (the openssl-3.5.5-4.el9_8 false-positive pattern).
+        """
+        merged = grype_v.copy()
+        merged["found_by"] = ["grype", "trivy"]
+        merged["confidence"] = "high"
+
+        # fix_available: true if EITHER scanner found a fix.
+        merged["fix_available"] = bool(
+            grype_v.get("fix_available") or trivy_v.get("fix_available")
+        )
+
+        # fix_versions: union (preserve order, drop empties/dupes).
+        fixes = []
+        for src in (grype_v.get("fix_versions") or [], trivy_v.get("fix_versions") or []):
+            for fx in src:
+                fx = (fx or "").strip()
+                if fx and fx.lower() not in ("none", "n/a") and fx not in fixes:
+                    fixes.append(fx)
+        merged["fix_versions"] = fixes
+
+        # severity: keep the worse of the two.
+        gs = (grype_v.get("severity") or "unknown").lower()
+        ts = (trivy_v.get("severity") or "unknown").lower()
+        if self._SEVERITY_RANK.get(ts, 9) < self._SEVERITY_RANK.get(gs, 9):
+            merged["severity"] = trivy_v.get("severity")
+
+        # cvss_score: keep the higher of the two when both present.
+        gc = grype_v.get("cvss_score") or 0
+        tc = trivy_v.get("cvss_score") or 0
+        try:
+            if float(tc) > float(gc or 0):
+                merged["cvss_score"] = trivy_v.get("cvss_score")
+        except (TypeError, ValueError):
+            pass
+
+        return merged
+
     def _deduplicate_vulnerabilities(
         self,
         grype_vulns: List[Dict],
         trivy_vulns: List[Dict],
     ) -> Dict[str, Any]:
         """Deduplicate vulnerabilities found by multiple scanners."""
-        grype_map = {f"{v['id']}:{v['package_name']}": v for v in grype_vulns}
-        trivy_map = {f"{v['id']}:{v['package_name']}": v for v in trivy_vulns}
+        grype_map: Dict[str, Dict] = {}
+        for v in grype_vulns:
+            k = self._dedup_key(v)
+            if k:
+                grype_map[k] = v
+        trivy_map: Dict[str, Dict] = {}
+        for v in trivy_vulns:
+            k = self._dedup_key(v)
+            if k:
+                trivy_map[k] = v
 
         all_keys = set(grype_map) | set(trivy_map)
         result: Dict[str, Any] = {
@@ -322,9 +391,7 @@ class ScannerOrchestrator:
             in_trivy = key in trivy_map
 
             if in_grype and in_trivy:
-                vuln = grype_map[key].copy()
-                vuln["found_by"] = ["grype", "trivy"]
-                vuln["confidence"] = "high"
+                vuln = self._merge_both(grype_map[key], trivy_map[key])
                 if "secrets" in trivy_map[key]:
                     vuln["trivy_additional_data"] = trivy_map[key]
                 result["all"].append(vuln)

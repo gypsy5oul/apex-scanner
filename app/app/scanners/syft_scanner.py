@@ -48,12 +48,16 @@ class SyftScanner(BaseScanner):
 
             # Build a single syft command with multiple -o flags so the image
             # is pulled and analysed only once (instead of once per format).
+            # Build all -o flags first, then `--`, then the image last as a
+            # positional arg so an image starting with '-' can't be parsed as
+            # a Syft flag (defense-in-depth alongside the API image validator).
             output_paths = {}
-            command = ["syft", image_name]
+            command = ["syft"]
             for fmt in output_formats:
                 path = f"{output_dir}/{scan_id}_{fmt.replace('-', '_')}.json"
                 command.extend(["-o", f"{fmt}={path}"])
                 output_paths[fmt] = path
+            command.extend(["--", image_name])
 
             result = subprocess.run(
                 command,
@@ -81,7 +85,7 @@ class SyftScanner(BaseScanner):
                 )
                 for fmt, path in output_paths.items():
                     fallback = subprocess.run(
-                        ["syft", image_name, "-o", f"{fmt}={path}"],
+                        ["syft", "-o", f"{fmt}={path}", "--", image_name],
                         capture_output=True,
                         text=True,
                         timeout=timeout,

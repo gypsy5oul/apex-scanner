@@ -1,5 +1,15 @@
 version: "3.8"
 
+# Bounded json-file logging for every service. Docker's default json-file
+# driver has NO size cap, so ~10 containers at --loglevel=info write
+# unbounded logs into /opt/docker — a prime suspect for the overlay2 disk
+# leak. 50MB x 5 files = at most 250MB per container.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 # Shared environment variables for all app services
 x-common-env: &common-env
   # Default to IST so container `date`, structured-log timestamps, and any
@@ -57,6 +67,7 @@ services:
       - /opt/scanner-reports:/var/www/html/reports
       - /opt/scanner-sboms:/var/www/html/sboms
     restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
       interval: 30s
@@ -102,6 +113,7 @@ services:
       - /opt/new-grype-scanner-v1/scanner-cache/trivy:/home/scanner/.cache/trivy
       - ${DOCKER_CONFIG_PATH:-./scripts/empty-docker-config.json}:/home/scanner/.docker/config.json:ro
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       # Scale horizontally for interactive (high-priority) scan capacity.
       # 3 replicas × concurrency=8 = 24 parallel high-priority slots.
@@ -144,6 +156,7 @@ services:
       - /opt/new-grype-scanner-v1/scanner-cache/trivy:/home/scanner/.cache/trivy
       - ${DOCKER_CONFIG_PATH:-./scripts/empty-docker-config.json}:/home/scanner/.docker/config.json:ro
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       mode: replicated
       replicas: ${BATCH_WORKER_REPLICAS:-2}
@@ -182,6 +195,7 @@ services:
       - /opt/new-grype-scanner-v1/scanner-cache/grype:/home/scanner/.cache/grype
       - /opt/new-grype-scanner-v1/scanner-cache/trivy:/home/scanner/.cache/trivy
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -205,6 +219,7 @@ services:
     environment:
       <<: *common-env
     restart: unless-stopped
+    logging: *default-logging
 
   # Docker socket proxy — restricts Docker API access to read-only container listing.
   # Only the autoscaler needs Docker access (to count worker containers).
@@ -229,6 +244,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -257,6 +273,7 @@ services:
       SCALE_DOWN_THRESHOLD: ${SCALE_DOWN_THRESHOLD:-2}
       CHECK_INTERVAL: ${AUTOSCALE_CHECK_INTERVAL:-30}
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -282,6 +299,7 @@ services:
     environment:
       <<: *common-env
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -314,6 +332,7 @@ services:
       timeout: 3s
       retries: 3
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -336,6 +355,7 @@ services:
       - TZ=${TZ:-UTC}
       - REACT_APP_API_URL=${DASHBOARD_API_URL:-http://localhost:7070}
     restart: unless-stopped
+    logging: *default-logging
 
 networks:
   default:

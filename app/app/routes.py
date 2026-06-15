@@ -29,6 +29,46 @@ logger = get_logger(__name__)
 # UUID format validation pattern for scan_id parameters
 UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 
+# Allowed characters for a container image reference:
+#   [registry[:port]/]repository[:tag][@sha256:digest]
+# MUST start with an alphanumeric — this is what blocks argument injection.
+# Grype and Syft take the image as the first positional CLI arg, so an input
+# like "--config=/etc/passwd" or "--output=/tmp/x" would otherwise be parsed
+# as a scanner flag. Anything starting with '-' (or '/', a space, etc.) is
+# rejected here with a clean 400 instead of reaching the subprocess.
+_IMAGE_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:@-]*$")
+
+# Shell metacharacters kept as a redundant second gate (subprocess uses list
+# args so there is no shell, but this rejects obviously-hostile input early).
+_DANGEROUS_CHARS = [';', '&', '|', '$', '`', '(', ')', '{', '}',
+                    '[', ']', '<', '>', '\n', '\r', ' ', '\t']
+
+
+def _validate_image_ref(v: str) -> str:
+    """Validate + sanitize a single container image reference.
+
+    Raises ValueError (→ 422/400) on anything that is not a well-formed
+    image ref. Critically rejects leading-dash inputs to prevent CLI
+    argument/flag injection into Grype/Syft.
+    """
+    v = (v or "").strip()
+    if not v:
+        raise ValueError("Image name cannot be empty")
+    if v.startswith("-"):
+        raise ValueError(
+            "Image name may not start with '-' (looks like a CLI flag)"
+        )
+    for char in _DANGEROUS_CHARS:
+        if char in v:
+            disp = {'\n': '\\n', '\r': '\\r', '\t': '\\t', ' ': 'space'}.get(char, char)
+            raise ValueError(f"Invalid character in image name: {disp}")
+    if not _IMAGE_REF_RE.match(v):
+        raise ValueError(
+            "Image name is not a valid container image reference "
+            "(expected [registry[:port]/]repository[:tag][@digest])"
+        )
+    return v
+
 
 def scan_redis_keys(redis_client: redis.Redis, pattern: str, count: int = 100) -> list:
     """
@@ -132,13 +172,8 @@ class ScanRequest(BaseModel):
     @field_validator('image_name')
     @classmethod
     def validate_image_name(cls, v: str) -> str:
-        """Validate and sanitize image name"""
-        # Remove any shell metacharacters for security
-        dangerous_chars = [';', '&', '|', '$', '`', '(', ')', '{', '}', '[', ']', '<', '>', '\n', '\r']
-        for char in dangerous_chars:
-            if char in v:
-                raise ValueError(f"Invalid character in image name: {char}")
-        return v.strip()
+        """Validate and sanitize image name (blocks CLI flag injection)."""
+        return _validate_image_ref(v)
 
     model_config = {
         "json_schema_extra": {
@@ -160,18 +195,10 @@ class BatchScanRequest(BaseModel):
     @field_validator('images')
     @classmethod
     def validate_images(cls, v: List[str]) -> List[str]:
-        """Validate all image names in batch"""
+        """Validate all image names in batch (blocks CLI flag injection)."""
         if len(v) > settings.BATCH_MAX_IMAGES:
             raise ValueError(f"Maximum {settings.BATCH_MAX_IMAGES} images per batch")
-
-        dangerous_chars = [';', '&', '|', '$', '`', '(', ')', '{', '}', '[', ']', '<', '>', '\n', '\r']
-        validated = []
-        for img in v:
-            for char in dangerous_chars:
-                if char in img:
-                    raise ValueError(f"Invalid character in image name: {char}")
-            validated.append(img.strip())
-        return validated
+        return [_validate_image_ref(img) for img in v]
 
 
 # Response Models

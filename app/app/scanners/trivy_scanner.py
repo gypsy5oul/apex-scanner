@@ -75,7 +75,9 @@ class TrivyScanner(BaseScanner):
                 "--cache-dir", trivy_cache,
             ]
 
-            command.append(image_name)
+            # `--` stops Trivy's flag parser before the positional image arg
+            # (defense-in-depth alongside the API-layer image validator).
+            command.extend(["--", image_name])
 
             result = subprocess.run(
                 command,

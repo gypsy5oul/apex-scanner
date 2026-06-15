@@ -98,11 +98,16 @@ class GrypeScanner(BaseScanner):
         try:
             self.logger.info(f"Starting Grype scan for: {image_name}")
 
+            # Flags first, then `--`, then the image as a positional arg.
+            # The `--` stops Grype's flag parser, so an image reference that
+            # somehow starts with '-' can never be interpreted as a CLI flag
+            # (defense-in-depth alongside the API-layer image validator).
             command = [
                 "grype",
-                image_name,
                 "-o", "json",
-                "--scope", "all-layers"
+                "--scope", "all-layers",
+                "--",
+                image_name,
             ]
 
             # Disable auto DB update during scans to avoid failures on low disk.
