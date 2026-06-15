@@ -42,6 +42,7 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import GavelIcon from '@mui/icons-material/Gavel';
 import { useTheme, alpha } from '@mui/material/styles';
+import { DataGrid } from '@mui/x-data-grid';
 import { getSeverity, severityAccent } from '../theme/tokens';
 import {
   getScanResult,
@@ -58,6 +59,7 @@ import {
 import SeverityChip from '../components/SeverityChip';
 import { VulnerabilityDoughnut } from '../components/VulnerabilityChart';
 import AITriagePanel from '../components/AITriagePanel';
+import { PageHeaderSkeleton, CardGridSkeleton } from '../components/LoadingSkeletons';
 
 // Rewrite report/SBOM URLs to use the actual API host instead of whatever the backend stored
 const getApiHost = () => {
@@ -101,6 +103,35 @@ const downloadFile = async (url, filename) => {
 
 // Map a risk/category label to a severity token (guaranteed-contrast solid color).
 const RISK_SEVERITY = { critical: 'critical', high: 'high', medium: 'medium', low: 'low' };
+
+// DataGrid columns for the license-violations table (virtualized + sortable).
+const LICENSE_COLUMNS = [
+  {
+    field: 'severity', headerName: 'Severity', width: 110,
+    renderCell: (p) => (
+      <Chip
+        size="small"
+        label={(p.value || '').toUpperCase()}
+        color={p.value === 'fail' ? 'error' : p.value === 'warn' ? 'warning' : 'default'}
+      />
+    ),
+  },
+  { field: 'name', headerName: 'Package', flex: 1, minWidth: 160, renderCell: (p) => <strong>{p.value}</strong> },
+  { field: 'version', headerName: 'Version', width: 130, renderCell: (p) => <Box component="code">{p.value}</Box> },
+  { field: 'type', headerName: 'Type', width: 100 },
+  { field: 'category', headerName: 'Category', width: 160, renderCell: (p) => <Box component="code">{p.value}</Box> },
+  {
+    field: 'licenses', headerName: 'License(s)', flex: 1, minWidth: 200, sortable: false,
+    valueGetter: (p) => (p.row.licenses || []).join(', '),
+    renderCell: (p) => (
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, py: 0.5 }}>
+        {(p.row.licenses || []).map((lic, j) => (
+          <Chip key={j} size="small" label={lic} variant="outlined" sx={{ fontSize: '0.7rem' }} />
+        ))}
+      </Box>
+    ),
+  },
+];
 
 function ScanResults() {
   const theme = useTheme();
@@ -264,8 +295,9 @@ function ScanResults() {
 
   if (loading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
-        <CircularProgress />
+      <Box>
+        <PageHeaderSkeleton />
+        <CardGridSkeleton count={3} height={220} cols={{ xs: 12, md: 4 }} />
       </Box>
     );
   }
@@ -1282,56 +1314,24 @@ function ScanResults() {
                                   <Typography variant="h6" gutterBottom>
                                     Packages Requiring Review ({violations.length})
                                   </Typography>
-                                  <TableContainer component={Paper} variant="outlined">
-                                    <Table size="small">
-                                      <TableHead>
-                                        <TableRow>
-                                          <TableCell>Severity</TableCell>
-                                          <TableCell>Package</TableCell>
-                                          <TableCell>Version</TableCell>
-                                          <TableCell>Type</TableCell>
-                                          <TableCell>Category</TableCell>
-                                          <TableCell>License(s)</TableCell>
-                                        </TableRow>
-                                      </TableHead>
-                                      <TableBody>
-                                        {violations.slice(0, 200).map((v, i) => (
-                                          <TableRow key={i}>
-                                            <TableCell>
-                                              <Chip
-                                                size="small"
-                                                label={(v.severity || '').toUpperCase()}
-                                                color={v.severity === 'fail' ? 'error' : v.severity === 'warn' ? 'warning' : 'default'}
-                                              />
-                                            </TableCell>
-                                            <TableCell><strong>{v.name}</strong></TableCell>
-                                            <TableCell><code>{v.version}</code></TableCell>
-                                            <TableCell>
-                                              <Typography variant="caption" color="text.secondary">{v.type}</Typography>
-                                            </TableCell>
-                                            <TableCell><code>{v.category}</code></TableCell>
-                                            <TableCell>
-                                              {(v.licenses || []).map((lic, j) => (
-                                                <Chip
-                                                  key={j}
-                                                  size="small"
-                                                  label={lic}
-                                                  variant="outlined"
-                                                  sx={{ mr: 0.5, mb: 0.5, fontSize: '0.7rem' }}
-                                                />
-                                              ))}
-                                            </TableCell>
-                                          </TableRow>
-                                        ))}
-                                      </TableBody>
-                                    </Table>
-                                  </TableContainer>
-                                  {violations.length > 200 && (
-                                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                                      Showing first 200 of {violations.length} — full list via{' '}
-                                      <code>GET /api/v2/scan/{scanId}/licenses</code>
-                                    </Typography>
-                                  )}
+                                  <Box sx={{ height: 520, width: '100%' }}>
+                                    <DataGrid
+                                      rows={violations.map((v, i) => ({ id: i, ...v }))}
+                                      columns={LICENSE_COLUMNS}
+                                      density="compact"
+                                      getRowHeight={() => 'auto'}
+                                      pageSizeOptions={[25, 50, 100]}
+                                      initialState={{
+                                        pagination: { paginationModel: { pageSize: 25 } },
+                                        sorting: { sortModel: [{ field: 'severity', sort: 'asc' }] },
+                                      }}
+                                      disableRowSelectionOnClick
+                                      sx={{
+                                        border: 0,
+                                        '& .MuiDataGrid-cell': { alignItems: 'flex-start', py: 0.75 },
+                                      }}
+                                    />
+                                  </Box>
                                 </>
                               ) : (
                                 <Alert severity="success">

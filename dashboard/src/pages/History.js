@@ -26,6 +26,29 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import { getImageHistory, getRecentScans } from '../api';
 import SeverityChip from '../components/SeverityChip';
 import { VulnerabilityBar } from '../components/VulnerabilityChart';
+import { TableSkeleton } from '../components/LoadingSkeletons';
+import { useTableSort, SortableHeadCell } from '../components/SortableTable';
+
+// Stable accessor maps (defined once so the sort memo doesn't thrash).
+const RECENT_ACCESSORS = {
+  image_name: (s) => s.image_name,
+  status: (s) => s.status,
+  critical: (s) => s.summary?.critical || 0,
+  high: (s) => s.summary?.high || 0,
+  medium: (s) => s.summary?.medium || 0,
+  low: (s) => s.summary?.low || 0,
+  timestamp: (s) => (s.timestamp ? new Date(s.timestamp).getTime() : 0),
+};
+
+const HISTORY_ACCESSORS = {
+  scan_timestamp: (s) => (s.scan_timestamp ? new Date(s.scan_timestamp).getTime() : 0),
+  status: (s) => s.status,
+  critical: (s) => s.critical || 0,
+  high: (s) => s.high || 0,
+  medium: (s) => s.medium || 0,
+  low: (s) => s.low || 0,
+  total_packages: (s) => s.total_packages || 0,
+};
 
 function History() {
   const navigate = useNavigate();
@@ -35,6 +58,9 @@ function History() {
   const [loading, setLoading] = useState(false);
   const [recentLoading, setRecentLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  const recentSort = useTableSort(recentScans, RECENT_ACCESSORS, { key: 'timestamp', dir: 'desc' });
+  const historySort = useTableSort(history?.history || [], HISTORY_ACCESSORS, { key: 'scan_timestamp', dir: 'desc' });
 
   // Fetch recent scans on component mount
   const fetchRecentScans = async () => {
@@ -132,9 +158,7 @@ function History() {
           </Box>
 
           {recentLoading ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-              <CircularProgress />
-            </Box>
+            <TableSkeleton rows={6} cols={8} />
           ) : recentScans.length === 0 ? (
             <Typography color="text.secondary" textAlign="center" py={3}>
               No scans found. Start by scanning an image.
@@ -144,18 +168,30 @@ function History() {
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell>Image Name</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Critical</TableCell>
-                    <TableCell>High</TableCell>
-                    <TableCell>Medium</TableCell>
-                    <TableCell>Low</TableCell>
-                    <TableCell>Scanned At</TableCell>
+                    {[
+                      ['image_name', 'Image Name'],
+                      ['status', 'Status'],
+                      ['critical', 'Critical'],
+                      ['high', 'High'],
+                      ['medium', 'Medium'],
+                      ['low', 'Low'],
+                      ['timestamp', 'Scanned At'],
+                    ].map(([key, label]) => (
+                      <SortableHeadCell
+                        key={key}
+                        columnKey={key}
+                        orderBy={recentSort.orderBy}
+                        order={recentSort.order}
+                        onSort={recentSort.handleSort}
+                      >
+                        {label}
+                      </SortableHeadCell>
+                    ))}
                     <TableCell>Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {recentScans.map((scan) => (
+                  {recentSort.sorted.map((scan) => (
                     <TableRow key={scan.scan_id} hover>
                       <TableCell>
                         <Typography
@@ -304,18 +340,30 @@ function History() {
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell>Date</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Critical</TableCell>
-                    <TableCell>High</TableCell>
-                    <TableCell>Medium</TableCell>
-                    <TableCell>Low</TableCell>
-                    <TableCell>Packages</TableCell>
+                    {[
+                      ['scan_timestamp', 'Date'],
+                      ['status', 'Status'],
+                      ['critical', 'Critical'],
+                      ['high', 'High'],
+                      ['medium', 'Medium'],
+                      ['low', 'Low'],
+                      ['total_packages', 'Packages'],
+                    ].map(([key, label]) => (
+                      <SortableHeadCell
+                        key={key}
+                        columnKey={key}
+                        orderBy={historySort.orderBy}
+                        order={historySort.order}
+                        onSort={historySort.handleSort}
+                      >
+                        {label}
+                      </SortableHeadCell>
+                    ))}
                     <TableCell>Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {history.history.map((scan) => (
+                  {historySort.sorted.map((scan) => (
                     <TableRow key={scan.scan_id} hover>
                       <TableCell>
                         {scan.scan_timestamp

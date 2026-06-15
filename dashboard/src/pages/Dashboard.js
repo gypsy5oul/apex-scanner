@@ -8,7 +8,6 @@ import {
   Card,
   CardContent,
   Alert,
-  CircularProgress,
   Button,
   Chip,
   LinearProgress,
@@ -29,6 +28,7 @@ import WarningIcon from '@mui/icons-material/Warning';
 import ErrorIcon from '@mui/icons-material/Error';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import { getStats, healthCheck, getRecentScans } from '../api';
+import { PageHeaderSkeleton, StatCardsSkeleton, CardGridSkeleton } from '../components/LoadingSkeletons';
 
 function StatCard({ title, value, subtitle, icon, color }) {
   return (
@@ -162,8 +162,10 @@ function Dashboard() {
 
   if (loading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}>
-        <CircularProgress />
+      <Box>
+        <PageHeaderSkeleton />
+        <StatCardsSkeleton count={4} />
+        <CardGridSkeleton count={2} height={320} cols={{ xs: 12, lg: 6 }} />
       </Box>
     );
   }

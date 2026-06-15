@@ -32,6 +32,7 @@ import SecurityIcon from '@mui/icons-material/Security';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import SearchIcon from '@mui/icons-material/Search';
 import { getComplianceFrameworks, getComplianceAssessment } from '../api';
+import { CardGridSkeleton } from '../components/LoadingSkeletons';
 
 const statusColors = {
   compliant: 'success',
@@ -335,9 +336,7 @@ function Compliance() {
 
       {/* Framework Cards */}
       {frameworksLoading ? (
-        <Box sx={{ textAlign: 'center', py: 4 }}>
-          <CircularProgress />
-        </Box>
+        <CardGridSkeleton count={4} height={200} cols={{ xs: 12, md: 6 }} />
       ) : (
         <Grid container spacing={3}>
           {frameworks.map((fw) => (
