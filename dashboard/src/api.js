@@ -1,6 +1,12 @@
 import axios from 'axios';
 
-// Use window.location to dynamically determine API URL
+// Resolve the API base URL.
+//
+// Default is SAME-ORIGIN: behind the TLS edge proxy the page and the API share
+// one origin (the proxy routes /api, /reports, /sboms to the API), so we just
+// use the page's own origin — this keeps everything on https with no
+// mixed-content or CORS. A different API origin can still be forced by setting
+// window.REACT_APP_API_URL (e.g. a legacy two-port deployment).
 const getApiUrl = () => {
   if (window.REACT_APP_API_URL) {
     return window.REACT_APP_API_URL;
@@ -8,8 +14,13 @@ const getApiUrl = () => {
   if (process.env.REACT_APP_API_URL) {
     return process.env.REACT_APP_API_URL;
   }
-  const host = window.location.hostname;
-  return `http://${host}:7070`;
+  // Behind the TLS edge the app is served on https / the standard port and the
+  // API is same-origin. In the legacy two-port mode it's plain http on a raw
+  // port (e.g. :3001) and the API is on :7070. Detect which we're in so this is
+  // safe to ship before the edge exists.
+  const { protocol, hostname, port, origin } = window.location;
+  const proxied = protocol === 'https:' || port === '' || port === '80' || port === '443';
+  return proxied ? origin : `http://${hostname}:7070`;
 };
 
 const API_BASE_URL = getApiUrl();

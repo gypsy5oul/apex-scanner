@@ -56,7 +56,9 @@ services:
       dockerfile: Dockerfile.api
     container_name: fastapi_scanner
     ports:
-      - "${SCANNER_PORT:-7070}:8000"
+      # Bound to localhost only — the public entry point is the TLS edge proxy
+      # (apexscanner.6dcorp.internal). Edge reaches this via the compose network.
+      - "127.0.0.1:${SCANNER_PORT:-7070}:8000"
     depends_on:
       redis:
         condition: service_healthy
@@ -348,7 +350,8 @@ services:
       dockerfile: Dockerfile
     container_name: scanner_dashboard
     ports:
-      - "${DASHBOARD_PORT:-3001}:8080"
+      # Localhost only — public access is via the TLS edge proxy.
+      - "127.0.0.1:${DASHBOARD_PORT:-3001}:8080"
     depends_on:
       - api
     environment:

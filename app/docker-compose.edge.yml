@@ -1,0 +1,41 @@
+# ---------------------------------------------------------------------------
+# TLS edge overlay — apexscanner.6dcorp.internal
+#
+# Draft: deploy ONLY after Phase-0 prereqs are met (DNS A record, CA cert at
+# /opt/vault/cert/6d-corp.pem, real AppRole creds, and the Vault Agent has
+# rendered the cert to /etc/ssl/apexscanner/{fullchain,key}.pem).
+#
+# Usage (from app/):
+#   docker-compose -f docker-compose.yml -f docker-compose.edge.yml up -d
+#
+# This overlay ADDS the edge proxy and sets the API's CORS origin. The
+# port-hardening (binding the raw 3001/7070 to localhost) is a one-line edit
+# to the main compose at rollout — see app/edge/README.md — because compose
+# overlays append to `ports:` rather than replace them.
+# ---------------------------------------------------------------------------
+services:
+  edge:
+    image: nginx:1.27-alpine
+    container_name: apexscanner_edge
+    depends_on:
+      - dashboard
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./edge/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/ssl/apexscanner:/etc/nginx/certs:ro   # rendered by Vault Agent on the host
+    restart: unless-stopped
+    # Inlined (YAML anchors from the base file don't cross into overlays).
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # Same-origin means CORS is no longer required; set it explicitly anyway so
+  # the FQDN is the only allowed cross-origin (harmless, belt-and-suspenders).
+  api:
+    environment:
+      - CORS_ORIGINS=https://apexscanner.6dcorp.internal

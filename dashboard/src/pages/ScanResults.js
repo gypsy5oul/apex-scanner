@@ -62,11 +62,17 @@ import AITriagePanel from '../components/AITriagePanel';
 import { PageHeaderSkeleton, CardGridSkeleton } from '../components/LoadingSkeletons';
 import { CountUp } from '../components/Motion';
 
-// Rewrite report/SBOM URLs to use the actual API host instead of whatever the backend stored
+// Rewrite report/SBOM URLs to the current API origin instead of whatever the
+// backend stored. Defaults to SAME-ORIGIN (the TLS edge proxy serves /reports
+// and /sboms), so report links stay on https. Override via window.REACT_APP_API_URL.
 const getApiHost = () => {
   if (window.REACT_APP_API_URL) return window.REACT_APP_API_URL;
   if (process.env.REACT_APP_API_URL) return process.env.REACT_APP_API_URL;
-  return `${window.location.protocol}//${window.location.hostname}:7070`;
+  // Same mode detection as api.js: same-origin behind the edge, :7070 in the
+  // legacy two-port mode — so this stays correct before and after the cutover.
+  const { protocol, hostname, port, origin } = window.location;
+  const proxied = protocol === 'https:' || port === '' || port === '80' || port === '443';
+  return proxied ? origin : `http://${hostname}:7070`;
 };
 
 const fixReportUrl = (url) => {
@@ -133,6 +139,58 @@ const LICENSE_COLUMNS = [
     ),
   },
 ];
+
+// Circular risk gauge — replaces a flat colored block. Ring fill scales the
+// score (auto-detects a 0-10 vs 0-100 range); color comes from severity tokens.
+function RiskGauge({ score = 0, level = 'low' }) {
+  const t = getSeverity(RISK_SEVERITY[level] || 'low');
+  const s = Number(score) || 0;
+  const max = s > 10 ? 100 : 10;
+  const pct = Math.max(0, Math.min(1, s / max));
+  const R = 70;
+  const C = 2 * Math.PI * R;
+  const off = C * (1 - pct);
+  return (
+    <Box sx={{ position: 'relative', width: 184, height: 184, mx: 'auto', color: 'text.primary' }}>
+      <Box component="svg" width="184" height="184" viewBox="0 0 184 184" sx={{ transform: 'rotate(-90deg)' }}>
+        <circle cx="92" cy="92" r={R} fill="none" stroke="currentColor" strokeOpacity="0.12" strokeWidth="13" />
+        <circle
+          cx="92" cy="92" r={R} fill="none" stroke={t.solid} strokeWidth="13" strokeLinecap="round"
+          strokeDasharray={C} strokeDashoffset={off}
+        />
+      </Box>
+      <Box sx={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+        <Typography variant="h3" fontWeight={800} sx={{ lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+          {s.toFixed(1)}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: '0.6rem' }}>
+          Risk Score
+        </Typography>
+        <Box sx={{ mt: 0.75, px: 1, py: '2px', borderRadius: 1, fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.06em', color: '#fff', bgcolor: t.solid }}>
+          {(level || 'unknown').toUpperCase()}
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+// Tonal stat card (glass surface + accent tile + colored number) — lighter and
+// more consistent than a fully saturated block.
+function AccentStat({ icon, value, label, color }) {
+  return (
+    <Card sx={{ height: '100%' }}>
+      <CardContent sx={{ textAlign: 'center', py: 2.5 }}>
+        <Box sx={{ width: 48, height: 48, borderRadius: 2, mx: 'auto', mb: 1.5, display: 'grid', placeItems: 'center', bgcolor: alpha(color, 0.14), color }}>
+          {React.cloneElement(icon, { sx: { fontSize: 24 } })}
+        </Box>
+        <Typography variant="h3" fontWeight={800} sx={{ color, lineHeight: 1 }}>
+          <CountUp value={value} />
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{label}</Typography>
+      </CardContent>
+    </Card>
+  );
+}
 
 function ScanResults() {
   const theme = useTheme();
@@ -715,18 +773,12 @@ function ScanResults() {
                     ) : riskScore ? (
                       <Grid container spacing={3}>
                         <Grid item xs={12} md={4}>
-                          <Card sx={{ bgcolor: getSeverity(RISK_SEVERITY[riskScore.overall_risk_level] || 'low').solid, color: '#fff', border: 'none' }}>
-                            <CardContent sx={{ textAlign: 'center' }}>
-                              <Typography variant="h2" fontWeight="bold">
-                                {riskScore.overall_risk_score?.toFixed(1) || 0}
+                          <Card sx={{ height: '100%' }}>
+                            <CardContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', py: 3 }}>
+                              <RiskGauge score={riskScore.overall_risk_score} level={riskScore.overall_risk_level} />
+                              <Typography variant="caption" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
+                                {riskScore.actively_exploited_count || 0} actively exploited · {riskScore.total_vulnerabilities || 0} total
                               </Typography>
-                              <Typography variant="h6">
-                                Overall Risk Score
-                              </Typography>
-                              <Chip
-                                label={riskScore.overall_risk_level?.toUpperCase() || 'UNKNOWN'}
-                                sx={{ mt: 1, bgcolor: 'rgba(255,255,255,0.2)', color: 'white' }}
-                              />
                             </CardContent>
                           </Card>
                         </Grid>
@@ -745,8 +797,15 @@ function ScanResults() {
                               <LinearProgress
                                 variant="determinate"
                                 value={Math.min(count / (riskScore.total_vulnerabilities || 1) * 100, 100)}
-                                sx={{ height: 8, borderRadius: 1 }}
-                                color={severity === 'critical' ? 'error' : severity === 'high' ? 'warning' : severity === 'medium' ? 'info' : 'success'}
+                                sx={{
+                                  height: 8,
+                                  borderRadius: 1,
+                                  bgcolor: 'action.hover',
+                                  '& .MuiLinearProgress-bar': {
+                                    borderRadius: 1,
+                                    backgroundColor: severityAccent(severity, theme.palette.mode),
+                                  },
+                                }}
                               />
                             </Box>
                           ))}
@@ -796,43 +855,28 @@ function ScanResults() {
                         <Grid item xs={12}>
                           <Grid container spacing={2}>
                             <Grid item xs={12} sm={4}>
-                              <Card sx={{ bgcolor: getSeverity(kevMatches?.total_kev_matches > 0 ? 'critical' : 'low').solid, color: '#fff', border: 'none' }}>
-                                <CardContent sx={{ textAlign: 'center' }}>
-                                  <GppMaybeIcon sx={{ fontSize: 40, mb: 1 }} />
-                                  <Typography variant="h3" fontWeight="bold">
-                                    <CountUp value={kevMatches?.total_kev_matches || 0} />
-                                  </Typography>
-                                  <Typography variant="body2">
-                                    Known Exploited (KEV)
-                                  </Typography>
-                                </CardContent>
-                              </Card>
+                              <AccentStat
+                                icon={<GppMaybeIcon />}
+                                value={kevMatches?.total_kev_matches || 0}
+                                label="Known Exploited (KEV)"
+                                color={getSeverity(kevMatches?.total_kev_matches > 0 ? 'critical' : 'low').solid}
+                              />
                             </Grid>
                             <Grid item xs={12} sm={4}>
-                              <Card sx={{ bgcolor: getSeverity('medium').solid, color: '#fff', border: 'none' }}>
-                                <CardContent sx={{ textAlign: 'center' }}>
-                                  <TrendingUpIcon sx={{ fontSize: 40, mb: 1 }} />
-                                  <Typography variant="h3" fontWeight="bold">
-                                    <CountUp value={enrichedData?.enrichment_summary?.high_risk_vulns || 0} />
-                                  </Typography>
-                                  <Typography variant="body2">
-                                    High Risk Priority
-                                  </Typography>
-                                </CardContent>
-                              </Card>
+                              <AccentStat
+                                icon={<TrendingUpIcon />}
+                                value={enrichedData?.enrichment_summary?.high_risk_vulns || 0}
+                                label="High Risk Priority"
+                                color={getSeverity('high').solid}
+                              />
                             </Grid>
                             <Grid item xs={12} sm={4}>
-                              <Card sx={{ bgcolor: theme.palette.primary.dark, color: '#fff', border: 'none' }}>
-                                <CardContent sx={{ textAlign: 'center' }}>
-                                  <SecurityIcon sx={{ fontSize: 40, mb: 1 }} />
-                                  <Typography variant="h3" fontWeight="bold">
-                                    <CountUp value={enrichedData?.enrichment_summary?.epss_enriched || 0} />
-                                  </Typography>
-                                  <Typography variant="body2">
-                                    EPSS Enriched
-                                  </Typography>
-                                </CardContent>
-                              </Card>
+                              <AccentStat
+                                icon={<SecurityIcon />}
+                                value={enrichedData?.enrichment_summary?.epss_enriched || 0}
+                                label="EPSS Enriched"
+                                color={theme.palette.primary.main}
+                              />
                             </Grid>
                           </Grid>
                         </Grid>
