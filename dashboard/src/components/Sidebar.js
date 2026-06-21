@@ -12,7 +12,6 @@ import {
   Box,
   Typography,
   alpha,
-  Button,
 } from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import ScannerIcon from '@mui/icons-material/DocumentScanner';
@@ -26,9 +25,6 @@ import LayersIcon from '@mui/icons-material/Layers';
 import ChangeHistoryIcon from '@mui/icons-material/ChangeHistory';
 import SettingsIcon from '@mui/icons-material/Settings';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
-import LoginIcon from '@mui/icons-material/Login';
-import LogoutIcon from '@mui/icons-material/Logout';
-import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SecurityIcon from '@mui/icons-material/Security';
 import PolicyIcon from '@mui/icons-material/Policy';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
@@ -64,7 +60,7 @@ const enterpriseMenuItems = [
 function Sidebar({ mobileOpen, onClose, drawerWidth }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAuthenticated, isAdmin, user, logout } = useAuth();
+  const { isAdmin } = useAuth();
 
   const MenuSection = ({ title, items }) => (
     <>
@@ -225,61 +221,6 @@ function Sidebar({ mobileOpen, onClose, drawerWidth }) {
 
       <Divider />
       <Box sx={{ p: 2 }}>
-        {/* Auth Status Box */}
-        <Box
-          sx={{
-            p: 2,
-            borderRadius: 2,
-            bgcolor: (theme) => alpha(
-              isAuthenticated() ? theme.palette.success.main : theme.palette.grey[500],
-              0.08
-            ),
-            mb: 2,
-          }}
-        >
-          {isAuthenticated() ? (
-            <>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                <AdminPanelSettingsIcon sx={{ fontSize: 18, color: isAdmin() ? 'success.main' : 'info.main' }} />
-                <Typography variant="caption" color={isAdmin() ? 'success.main' : 'info.main'} fontWeight={600}>
-                  {isAdmin() ? 'Admin Mode' : 'User Mode'}
-                </Typography>
-              </Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                Logged in as {user?.username}
-              </Typography>
-              <Button
-                size="small"
-                variant="outlined"
-                color="inherit"
-                startIcon={<LogoutIcon />}
-                onClick={logout}
-                fullWidth
-                sx={{ textTransform: 'none' }}
-              >
-                Logout
-              </Button>
-            </>
-          ) : (
-            <>
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-                Login for full access
-              </Typography>
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                startIcon={<LoginIcon />}
-                onClick={() => navigate('/login')}
-                fullWidth
-                sx={{ textTransform: 'none' }}
-              >
-                Login
-              </Button>
-            </>
-          )}
-        </Box>
-
         {/* Scanners Status */}
         <Box
           sx={{

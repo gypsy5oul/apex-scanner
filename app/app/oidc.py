@@ -15,7 +15,7 @@ import json
 import time
 import secrets
 from typing import Optional, Tuple
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, urlunparse
 
 import httpx
 import jwt
@@ -181,3 +181,29 @@ def username_from(claims: dict) -> str:
         or claims.get("sub")
         or "sso-user"
     )
+
+
+def _app_origin_path(path: str) -> str:
+    """Build an app URL (same scheme/host as the OIDC redirect) for `path`."""
+    p = urlparse(settings.OIDC_REDIRECT_URI)
+    return urlunparse((p.scheme, p.netloc, path, "", "", ""))
+
+
+ID_TOKEN_COOKIE_NAME = "apex_oidc_id"
+
+
+def rp_logout_url(id_token_hint: Optional[str] = None) -> Optional[str]:
+    """
+    Keycloak end-session URL for single logout (RP-initiated). Returns None
+    unless OIDC + OIDC_RP_LOGOUT are on (otherwise only the app cookie is
+    cleared). An `id_token_hint` is what lets Keycloak skip its logout
+    confirmation page and redirect straight back to post_logout_redirect_uri.
+    """
+    if not (is_enabled() and settings.OIDC_RP_LOGOUT):
+        return None
+    params = {"post_logout_redirect_uri": _app_origin_path("/login")}
+    if id_token_hint:
+        params["id_token_hint"] = id_token_hint
+    else:
+        params["client_id"] = settings.OIDC_CLIENT_ID
+    return end_session_endpoint() + "?" + urlencode(params)

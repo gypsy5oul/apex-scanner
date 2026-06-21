@@ -86,10 +86,20 @@ async def admin_login(request: LoginRequest = Body(...), http_request: Request =
     description="Clear authentication cookie and end session",
     tags=["authentication"]
 )
-async def logout():
-    """Logout by clearing the httpOnly authentication cookie."""
-    response = JSONResponse(content={"message": "Logged out successfully"})
+async def logout(request: Request):
+    """Clear the session cookie. For SSO with OIDC_RP_LOGOUT, also return the
+    Keycloak end-session URL (with id_token_hint) so the frontend can end the
+    SSO session and get redirected straight back to /login."""
+    id_token_hint = request.cookies.get(oidc.ID_TOKEN_COOKIE_NAME)
+    response = JSONResponse(content={
+        "message": "Logged out successfully",
+        "keycloak_logout_url": oidc.rp_logout_url(id_token_hint),
+    })
     clear_auth_cookie(response)
+    response.delete_cookie(
+        oidc.ID_TOKEN_COOKIE_NAME, path="/api/v2/auth",
+        httponly=True, secure=COOKIE_SECURE, samesite="lax",
+    )
     return response
 
 
@@ -204,6 +214,14 @@ async def oidc_callback(
     resp = RedirectResponse(url=settings.OIDC_POST_LOGIN_REDIRECT or "/", status_code=302)
     set_auth_cookie(resp, token, expires_in)
     resp.delete_cookie(oidc.STATE_COOKIE_NAME, path="/api/v2/auth/oidc")
+    # Keep the ID token so logout can pass id_token_hint to Keycloak (clean
+    # redirect back, no logout-confirmation page). Scoped to the auth path.
+    id_tok = tokens.get("id_token")
+    if id_tok:
+        resp.set_cookie(
+            key=oidc.ID_TOKEN_COOKIE_NAME, value=id_tok, max_age=expires_in,
+            path="/api/v2/auth", httponly=True, secure=COOKIE_SECURE, samesite="lax",
+        )
     logger.info("OIDC login success", username=username, role=role)
     return resp
 

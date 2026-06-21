@@ -49,6 +49,7 @@ services:
       - OIDC_REDIRECT_URI=https://apexscanner.6dcorp.internal/api/v2/auth/oidc/callback
       - OIDC_ADMIN_GROUP=devops
       - OIDC_CA_CERT=/etc/vault-ca/6d-corp.pem
+      - OIDC_RP_LOGOUT=true
     extra_hosts:
       - "keycloak.6dcorp.in:10.0.20.110"
     volumes:

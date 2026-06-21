@@ -71,15 +71,21 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = async () => {
+    let keycloakLogoutUrl = null;
     try {
-      // Call backend to clear the httpOnly cookie
-      await axios.post(`${API_BASE_URL}/api/v2/auth/logout`, {}, {
+      // Clears the httpOnly cookie; may return a Keycloak end-session URL.
+      const response = await axios.post(`${API_BASE_URL}/api/v2/auth/logout`, {}, {
         withCredentials: true,
       });
+      keycloakLogoutUrl = response.data?.keycloak_logout_url || null;
     } catch (error) {
       // Even if the request fails, clear local state
     }
     setUser(null);
+    if (keycloakLogoutUrl) {
+      // Single logout: end the Keycloak session too, then return to /login.
+      window.location.href = keycloakLogoutUrl;
+    }
   };
 
   const isAuthenticated = () => {
