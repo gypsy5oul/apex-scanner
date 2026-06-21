@@ -36,6 +36,20 @@ services:
 
   # Same-origin means CORS is no longer required; set it explicitly anyway so
   # the FQDN is the only allowed cross-origin (harmless, belt-and-suspenders).
+  # Also enables Keycloak OIDC (hybrid — local login stays). The client secret
+  # comes from app/.env (gitignored); the rest are non-secret.
   api:
     environment:
       - CORS_ORIGINS=https://apexscanner.6dcorp.internal
+      - COOKIE_SECURE=true
+      - OIDC_ENABLED=true
+      - OIDC_ISSUER=https://keycloak.6dcorp.in/realms/6D-CORP-INFRA
+      - OIDC_CLIENT_ID=apex-scanner
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      - OIDC_REDIRECT_URI=https://apexscanner.6dcorp.internal/api/v2/auth/oidc/callback
+      - OIDC_ADMIN_GROUP=devops
+      - OIDC_CA_CERT=/etc/vault-ca/6d-corp.pem
+    extra_hosts:
+      - "keycloak.6dcorp.in:10.0.20.110"
+    volumes:
+      - /opt/vault/cert/6d-corp.pem:/etc/vault-ca/6d-corp.pem:ro

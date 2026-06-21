@@ -1,6 +1,7 @@
 import React from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
-import { Box } from '@mui/material';
+import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { Box, CircularProgress } from '@mui/material';
+import { useAuth } from './context/AuthContext';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import AuroraBackground from './components/AuroraBackground';
@@ -63,6 +64,7 @@ function MainLayout({ children }) {
 
 function AppRoutes() {
   const location = useLocation();
+  const { isAuthenticated, loading } = useAuth();
 
   // Login page has no sidebar
   if (location.pathname === '/login') {
@@ -71,6 +73,21 @@ function AppRoutes() {
         <Route path="/login" element={<Login />} />
       </Routes>
     );
+  }
+
+  // While the session cookie is being verified, don't flash the app shell.
+  if (loading) {
+    return (
+      <Box sx={{ display: 'flex', minHeight: '100vh', alignItems: 'center', justifyContent: 'center' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  // Gate: unauthenticated users go straight to /login (no app shell, no second
+  // login entry point). Remember where they were headed.
+  if (!isAuthenticated()) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
   return (

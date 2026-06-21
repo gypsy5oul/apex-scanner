@@ -9,7 +9,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Path, Body, WebSocket, WebSocketDisconnect, BackgroundTasks, Depends, Request
-from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi.responses import JSONResponse, StreamingResponse, Response, RedirectResponse
 from pydantic import BaseModel, Field
 
 from app.config import settings, get_redis_client
@@ -18,8 +18,10 @@ from app.auth import (
     login, get_current_user, get_current_admin, get_optional_admin,
     APIKeyCreate, APIKeyResponse, APIKeyInfo,
     create_api_key, list_api_keys, revoke_api_key,
-    set_auth_cookie, clear_auth_cookie,
+    set_auth_cookie, clear_auth_cookie, create_access_token,
+    COOKIE_SECURE,
 )
+from app import oidc
 from app.logging_config import get_logger
 from app.scheduler import ScheduleManager, GoogleChatNotifier
 from app.base_image_tracker import BaseImageTracker
@@ -128,6 +130,82 @@ async def auth_status(current_user: Optional[TokenData] = Depends(get_optional_a
         "role": None,
         "expires": None
     }
+
+
+# ============== OIDC / Keycloak SSO (hybrid; local login retained) ==============
+
+@router_v2.get(
+    "/auth/config",
+    summary="Auth Config",
+    description="Public — tells the frontend whether SSO is available",
+    tags=["authentication"],
+)
+async def auth_config():
+    """Lets the login page show the SSO button only when OIDC is configured."""
+    enabled = oidc.is_enabled()
+    return {"oidc_enabled": enabled, "oidc_login_url": oidc.login_url() if enabled else None}
+
+
+@router_v2.get(
+    "/auth/oidc/login",
+    summary="OIDC Login",
+    description="Begin the Keycloak authorization-code flow",
+    tags=["authentication"],
+)
+async def oidc_login():
+    """Redirect the browser to Keycloak with a signed state + nonce."""
+    if not oidc.is_enabled():
+        raise HTTPException(status_code=404, detail="SSO is not enabled")
+    state, nonce, signed = oidc.make_state()
+    resp = RedirectResponse(url=oidc.build_authorize_url(state, nonce), status_code=302)
+    # Short-lived, scoped state cookie; SameSite=Lax so it survives the
+    # top-level GET redirect back from Keycloak.
+    resp.set_cookie(
+        key=oidc.STATE_COOKIE_NAME, value=signed, max_age=oidc.STATE_TTL_SECONDS,
+        path="/api/v2/auth/oidc", httponly=True, secure=COOKIE_SECURE, samesite="lax",
+    )
+    return resp
+
+
+@router_v2.get(
+    "/auth/oidc/callback",
+    summary="OIDC Callback",
+    description="Keycloak redirects here; we validate, map role, and set the session cookie",
+    tags=["authentication"],
+)
+async def oidc_callback(
+    request: Request,
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+):
+    if not oidc.is_enabled():
+        raise HTTPException(status_code=404, detail="SSO is not enabled")
+    if error or not code:
+        return RedirectResponse(url="/login?sso_error=1", status_code=302)
+
+    # CSRF: state query param must match the signed state cookie.
+    signed = request.cookies.get(oidc.STATE_COOKIE_NAME)
+    st = oidc.read_state(signed) if signed else None
+    if not st or not state or st.get("state") != state:
+        return RedirectResponse(url="/login?sso_error=state", status_code=302)
+
+    try:
+        tokens = await oidc.exchange_code(code)
+        claims = await oidc.validate_id_token(tokens.get("id_token", ""), st.get("nonce"))
+    except Exception as exc:  # noqa: BLE001 — any failure => bounce to login
+        logger.warning("OIDC callback failed", error=str(exc))
+        return RedirectResponse(url="/login?sso_error=exchange", status_code=302)
+
+    username = oidc.username_from(claims)
+    role = oidc.map_role(claims)
+    token, expires_in = create_access_token(username, role)
+
+    resp = RedirectResponse(url=settings.OIDC_POST_LOGIN_REDIRECT or "/", status_code=302)
+    set_auth_cookie(resp, token, expires_in)
+    resp.delete_cookie(oidc.STATE_COOKIE_NAME, path="/api/v2/auth/oidc")
+    logger.info("OIDC login success", username=username, role=role)
+    return resp
 
 
 # ============== Request/Response Models ==============

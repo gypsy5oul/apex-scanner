@@ -178,6 +178,19 @@ class Settings(BaseSettings):
         description="Enable API key authentication for CI/CD"
     )
 
+    # --- OIDC / Keycloak SSO (hybrid; local login is retained) ---
+    OIDC_ENABLED: bool = Field(default=False, description="Enable Keycloak OIDC login")
+    OIDC_ISSUER: str = Field(default="", description="OIDC issuer URL (Keycloak realm)")
+    OIDC_CLIENT_ID: str = Field(default="", description="OIDC client id")
+    OIDC_CLIENT_SECRET: str = Field(default="", description="OIDC client secret (confidential client)")
+    OIDC_REDIRECT_URI: str = Field(default="", description="OIDC callback URL (must be allowed in Keycloak)")
+    OIDC_GROUPS_CLAIM: str = Field(default="groups", description="ID-token claim holding group names")
+    OIDC_ADMIN_GROUP: str = Field(default="devops", description="Group name mapped to the admin role")
+    OIDC_DEFAULT_ROLE: str = Field(default="user", description="Role for SSO users not in the admin group")
+    OIDC_CA_CERT: str = Field(default="", description="CA bundle path to verify Keycloak TLS (empty = system trust)")
+    OIDC_RP_LOGOUT: bool = Field(default=False, description="Also end the Keycloak session on logout")
+    OIDC_POST_LOGIN_REDIRECT: str = Field(default="/", description="Where to send the browser after SSO login")
+
     @property
     def effective_redis_url(self) -> str:
         """Build Redis URL with authentication and TLS scheme."""

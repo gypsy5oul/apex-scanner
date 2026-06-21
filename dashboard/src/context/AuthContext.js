@@ -3,7 +3,8 @@ import axios from 'axios';
 
 const AuthContext = createContext(null);
 
-// Get API URL
+// Get API URL — same-origin behind the TLS edge, legacy :7070 when served
+// directly (mirrors the resolver in api.js).
 const getApiUrl = () => {
   if (window.REACT_APP_API_URL) {
     return window.REACT_APP_API_URL;
@@ -11,8 +12,9 @@ const getApiUrl = () => {
   if (process.env.REACT_APP_API_URL) {
     return process.env.REACT_APP_API_URL;
   }
-  const host = window.location.hostname;
-  return `http://${host}:7070`;
+  const { protocol, hostname, port, origin } = window.location;
+  const proxied = protocol === 'https:' || port === '' || port === '80' || port === '443';
+  return proxied ? origin : `http://${hostname}:7070`;
 };
 
 const API_BASE_URL = getApiUrl();

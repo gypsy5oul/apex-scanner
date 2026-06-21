@@ -107,6 +107,10 @@ export const healthCheck = () => axios.get(`${API_BASE_URL}/health`, { withCrede
 // Auth
 export const logoutApi = () => apiV2.post('/auth/logout');
 
+// SSO / OIDC: whether it's enabled, and the full URL to begin the flow.
+export const getAuthConfig = () => apiV2.get('/auth/config');
+export const getSsoLoginUrl = () => `${API_BASE_URL}/api/v2/auth/oidc/login`;
+
 // Scheduled Scans
 export const getSchedules = () => apiV2.get('/schedules');
 export const createSchedule = (data) => apiV2.post('/schedules', data);

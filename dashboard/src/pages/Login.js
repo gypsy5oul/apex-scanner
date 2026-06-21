@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
@@ -10,13 +10,17 @@ import {
   CircularProgress,
   InputAdornment,
   IconButton,
+  Divider,
+  Link,
 } from '@mui/material';
 import ChangeHistoryIcon from '@mui/icons-material/ChangeHistory';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import PersonIcon from '@mui/icons-material/Person';
 import LockIcon from '@mui/icons-material/Lock';
+import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import { useAuth } from '../context/AuthContext';
+import { getAuthConfig, getSsoLoginUrl } from '../api';
 
 function Login() {
   const navigate = useNavigate();
@@ -29,8 +33,27 @@ function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // SSO state: whether OIDC is available, and whether the user opted into the
+  // local-account form. SSO is the default; local is a secondary path.
+  const [ssoEnabled, setSsoEnabled] = useState(false);
+  const [showLocal, setShowLocal] = useState(false);
+
   // Get the page user was trying to access
   const from = location.state?.from?.pathname || '/';
+
+  useEffect(() => {
+    // Surface an SSO failure bounced back from the callback.
+    if (new URLSearchParams(location.search).has('sso_error')) {
+      setError('Single sign-on failed. Try again or use a local account.');
+    }
+    getAuthConfig()
+      .then((res) => setSsoEnabled(!!res.data?.oidc_enabled))
+      .catch(() => setSsoEnabled(false));
+  }, [location.search]);
+
+  const startSso = () => {
+    window.location.href = getSsoLoginUrl();
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -47,6 +70,9 @@ function Login() {
 
     setLoading(false);
   };
+
+  // Show the local form when SSO is unavailable or the user chose it.
+  const localVisible = !ssoEnabled || showLocal;
 
   return (
     <Box
@@ -116,7 +142,39 @@ function Login() {
           </Alert>
         )}
 
-        {/* Login Form */}
+        {/* SSO — primary */}
+        {ssoEnabled && (
+          <>
+            <Button
+              fullWidth
+              variant="contained"
+              size="large"
+              startIcon={<VpnKeyIcon />}
+              onClick={startSso}
+              sx={{ py: 1.5, fontWeight: 600, fontSize: '1rem' }}
+            >
+              Sign in with 6D SSO
+            </Button>
+            {!showLocal && (
+              <Box sx={{ textAlign: 'center', mt: 2 }}>
+                <Link
+                  component="button"
+                  type="button"
+                  variant="body2"
+                  underline="hover"
+                  onClick={() => setShowLocal(true)}
+                  sx={{ color: 'text.secondary' }}
+                >
+                  Use a local account
+                </Link>
+              </Box>
+            )}
+            {localVisible && <Divider sx={{ my: 3 }}>or sign in locally</Divider>}
+          </>
+        )}
+
+        {/* Local login form (secondary unless SSO is unavailable) */}
+        {localVisible && (
         <form onSubmit={handleSubmit}>
           <TextField
             fullWidth
@@ -177,6 +235,7 @@ function Login() {
             {loading ? <CircularProgress size={24} /> : 'Sign In'}
           </Button>
         </form>
+        )}
 
         <Typography
           variant="caption"
