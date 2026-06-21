@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 60" width="300" height="60" role="img" aria-label="Apex Scanner">
+  <defs>
+    <linearGradient id="dL" x1="10" y1="8" x2="26" y2="52" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#6FB0FF"></stop><stop offset="1" stop-color="#3C7DF5"></stop></linearGradient>
+    <linearGradient id="dR" x1="30" y1="10" x2="46" y2="52" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#6168F2"></stop><stop offset="1" stop-color="#7C5CF0"></stop></linearGradient>
+    <linearGradient id="dS" x1="20" y1="38" x2="36" y2="38" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#36E2FF" stop-opacity=".5"></stop><stop offset=".5" stop-color="#7DF0FF"></stop><stop offset="1" stop-color="#36E2FF" stop-opacity=".5"></stop></linearGradient>
+  </defs>
+  <g transform="translate(2,3) scale(0.82)">
+    <path d="M32 8.5 L11 55 L24 55 L32 24 Z" fill="url(#dL)"></path>
+    <path d="M32 8.5 L32 24 L40 55 L53 55 Z" fill="url(#dR)"></path>
+    <path d="M32 9 L32 24" stroke="#fff" stroke-opacity="0.3" stroke-width="0.8"></path>
+    <rect x="25" y="41.4" width="14" height="3" rx="1.5" fill="url(#dS)"></rect>
+    <circle cx="32" cy="13" r="3.2" fill="#fff"></circle>
+  </g>
+  <text x="64" y="32" font-family="Space Grotesk, sans-serif" font-size="25" font-weight="700" letter-spacing="-0.6" fill="#FFFFFF">Apex Scanner</text>
+  <text x="65" y="46" font-family="JetBrains Mono, monospace" font-size="8" letter-spacing="2.6" fill="#8E9BBC">PEAK VULNERABILITY DETECTION</text>
+</svg>

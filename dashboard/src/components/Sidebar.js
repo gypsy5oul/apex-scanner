@@ -22,7 +22,6 @@ import BugReportIcon from '@mui/icons-material/BugReport';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import LayersIcon from '@mui/icons-material/Layers';
-import ChangeHistoryIcon from '@mui/icons-material/ChangeHistory';
 import SettingsIcon from '@mui/icons-material/Settings';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
 import SecurityIcon from '@mui/icons-material/Security';
@@ -30,6 +29,7 @@ import PolicyIcon from '@mui/icons-material/Policy';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import GavelIcon from '@mui/icons-material/Gavel';
+import ApexLogo from './ApexLogo';
 import { useAuth } from '../context/AuthContext';
 
 const mainMenuItems = [
@@ -157,45 +157,7 @@ function Sidebar({ mobileOpen, onClose, drawerWidth }) {
 
       {/* Logo Section */}
       <Box sx={{ px: 2, py: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <Box
-            sx={{
-              width: 40,
-              height: 40,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              bgcolor: 'primary.main',
-              borderRadius: 1.5,
-            }}
-          >
-            <ChangeHistoryIcon
-              sx={{
-                fontSize: 24,
-                color: 'primary.contrastText',
-              }}
-            />
-          </Box>
-          <Box>
-            <Typography
-              variant="h6"
-              sx={{
-                fontWeight: 700,
-                lineHeight: 1.2,
-                letterSpacing: '-0.01em',
-                color: 'text.primary',
-              }}
-            >
-              Apex Scanner
-            </Typography>
-            <Typography
-              variant="caption"
-              sx={{ color: 'text.secondary', fontSize: '0.65rem' }}
-            >
-              Peak Vulnerability Detection
-            </Typography>
-          </Box>
-        </Box>
+        <ApexLogo size={34} tagline />
       </Box>
       <Divider />
 

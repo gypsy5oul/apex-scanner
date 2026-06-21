@@ -42,6 +42,9 @@ services:
     environment:
       - CORS_ORIGINS=https://apexscanner.6dcorp.internal
       - COOKIE_SECURE=true
+      # Public base for generated report/SBOM links (served via the edge, no
+      # port) — new scans + the SBOM report's vuln-report cross-link use this.
+      - SERVER_HOST=https://apexscanner.6dcorp.internal
       - OIDC_ENABLED=true
       - OIDC_ISSUER=https://keycloak.6dcorp.in/realms/6D-CORP-INFRA
       - OIDC_CLIENT_ID=apex-scanner

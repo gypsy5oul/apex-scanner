@@ -13,7 +13,6 @@ import {
   Divider,
   Link,
 } from '@mui/material';
-import ChangeHistoryIcon from '@mui/icons-material/ChangeHistory';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import PersonIcon from '@mui/icons-material/Person';
@@ -98,34 +97,18 @@ function Login() {
         {/* Logo */}
         <Box sx={{ textAlign: 'center', mb: 4 }}>
           <Box
-            sx={{
-              width: 72,
-              height: 72,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: (theme) =>
-                `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
-              borderRadius: 3,
-              boxShadow: '0 8px 24px rgba(25, 118, 210, 0.3)',
-              mb: 2,
-            }}
-          >
-            <ChangeHistoryIcon
-              sx={{
-                fontSize: 44,
-                color: '#fff',
-              }}
-            />
-          </Box>
+            component="img"
+            src="/brand/apex-logomark.svg"
+            alt="Apex Scanner"
+            sx={{ width: 56, height: 56, objectFit: 'contain', display: 'inline-block', mb: 1.5 }}
+          />
           <Typography
-            variant="h4"
             sx={{
+              fontFamily: '"Space Grotesk", "Inter", sans-serif',
               fontWeight: 700,
-              background: (theme) =>
-                `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
+              fontSize: '1.6rem',
+              letterSpacing: '-0.02em',
+              color: 'text.primary',
             }}
           >
             Apex Scanner
