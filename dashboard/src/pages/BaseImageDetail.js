@@ -28,6 +28,7 @@ import {
   LinearProgress,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
+import PageHeader from '../components/PageHeader';
 import {
   ArrowBack,
   Edit,
@@ -148,37 +149,38 @@ function BaseImageDetail() {
 
   return (
     <Box>
-      {/* Header */}
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Box display="flex" alignItems="center" gap={2}>
-          <IconButton onClick={() => navigate('/base-images')}>
-            <ArrowBack />
-          </IconButton>
-          <Box>
-            <Typography variant="h4" fontWeight="bold">
-              {base_image?.full_name || `${decodedImageName}:${decodedTag}`}
-            </Typography>
-            <Typography color="textSecondary">
-              {base_image?.description || 'No description'}
-            </Typography>
-          </Box>
-        </Box>
-        <Box display="flex" gap={2}>
-          <Button
-            variant="outlined"
-            startIcon={<Edit />}
-            onClick={() => setEditDialogOpen(true)}
-          >
-            Edit
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<Refresh />}
-            onClick={fetchDetails}
-          >
-            Refresh
-          </Button>
-        </Box>
+      {/* Header (detail page — back button + standard PageHeader) */}
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 3 }}>
+        <IconButton
+          onClick={() => navigate('/base-images')}
+          aria-label="Back to base images"
+          sx={{ mt: 0.25 }}
+        >
+          <ArrowBack />
+        </IconButton>
+        <PageHeader
+          sx={{ flex: 1, mb: 0 }}
+          title={base_image?.full_name || `${decodedImageName}:${decodedTag}`}
+          description={base_image?.description || 'No description'}
+          actions={
+            <>
+              <Button
+                variant="outlined"
+                startIcon={<Edit />}
+                onClick={() => setEditDialogOpen(true)}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="contained"
+                startIcon={<Refresh />}
+                onClick={fetchDetails}
+              >
+                Refresh
+              </Button>
+            </>
+          }
+        />
       </Box>
 
       {error && (

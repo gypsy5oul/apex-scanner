@@ -26,6 +26,7 @@ import {
   Tooltip,
   Grid,
 } from '@mui/material';
+import PageHeader from '../components/PageHeader';
 import {
   Add,
   Delete,
@@ -154,32 +155,28 @@ function Schedules() {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Box>
-          <Typography variant="h4" fontWeight="bold">
-            Scheduled Scans
-          </Typography>
-          <Typography color="textSecondary">
-            Configure automated security scans with notifications
-          </Typography>
-        </Box>
-        <Box display="flex" gap={2}>
-          <Button
-            variant="outlined"
-            startIcon={<Notifications />}
-            onClick={() => setTestDialogOpen(true)}
-          >
-            Test Webhook
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<Add />}
-            onClick={() => setDialogOpen(true)}
-          >
-            Create Schedule
-          </Button>
-        </Box>
-      </Box>
+      <PageHeader
+        title="Scheduled Scans"
+        description="Configure automated security scans with notifications"
+        actions={
+          <>
+            <Button
+              variant="outlined"
+              startIcon={<Notifications />}
+              onClick={() => setTestDialogOpen(true)}
+            >
+              Test Webhook
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<Add />}
+              onClick={() => setDialogOpen(true)}
+            >
+              Create Schedule
+            </Button>
+          </>
+        }
+      />
 
       {error && (
         <Alert severity="error" onClose={() => setError(null)} sx={{ mb: 2 }}>

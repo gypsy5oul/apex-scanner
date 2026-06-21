@@ -31,7 +31,6 @@ import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import UploadIcon from '@mui/icons-material/Upload';
-import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import {
   listVexStatements,
@@ -40,6 +39,7 @@ import {
   deleteVexStatement,
   importVexDocument,
 } from '../api';
+import PageHeader from '../components/PageHeader';
 
 const STATUS_COLORS = {
   not_affected: 'success',
@@ -268,33 +268,28 @@ function VexManagement() {
 
   return (
     <Box>
-      <Box sx={{ mb: 3, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <VerifiedUserIcon color="primary" sx={{ fontSize: 32 }} />
-          <Box>
-            <Typography variant="h5" fontWeight={700}>VEX Management</Typography>
-            <Typography variant="body2" color="text.secondary">
-              Manage Vulnerability Exploitability eXchange (VEX) statements
-            </Typography>
-          </Box>
-        </Box>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={loadStatements}
-          >
-            Refresh
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => { setEditData(null); setDialogOpen(true); }}
-          >
-            New Statement
-          </Button>
-        </Box>
-      </Box>
+      <PageHeader
+        title="VEX Management"
+        description="Manage Vulnerability Exploitability eXchange (VEX) statements"
+        actions={
+          <>
+            <Button
+              variant="outlined"
+              startIcon={<RefreshIcon />}
+              onClick={loadStatements}
+            >
+              Refresh
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => { setEditData(null); setDialogOpen(true); }}
+            >
+              New Statement
+            </Button>
+          </>
+        }
+      />
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}

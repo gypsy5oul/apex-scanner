@@ -21,6 +21,7 @@ import {
   ToggleButtonGroup,
   useTheme,
 } from '@mui/material';
+import PageHeader from '../components/PageHeader';
 import {
   TrendingUp,
   TrendingDown,
@@ -174,26 +175,27 @@ function Trends() {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" fontWeight="bold">
-          Vulnerability Trends
-        </Typography>
-        <Box display="flex" gap={2} alignItems="center">
-          <ToggleButtonGroup
-            value={period}
-            exclusive
-            onChange={(e, v) => v && setPeriod(v)}
-            size="small"
-          >
-            <ToggleButton value={7}>7 Days</ToggleButton>
-            <ToggleButton value={30}>30 Days</ToggleButton>
-            <ToggleButton value={90}>90 Days</ToggleButton>
-          </ToggleButtonGroup>
-          <Button startIcon={<Refresh />} onClick={fetchData} variant="outlined">
-            Refresh
-          </Button>
-        </Box>
-      </Box>
+      <PageHeader
+        title="Vulnerability Trends"
+        description="How critical, high, medium and low findings move over time"
+        actions={
+          <>
+            <ToggleButtonGroup
+              value={period}
+              exclusive
+              onChange={(e, v) => v && setPeriod(v)}
+              size="small"
+            >
+              <ToggleButton value={7}>7 Days</ToggleButton>
+              <ToggleButton value={30}>30 Days</ToggleButton>
+              <ToggleButton value={90}>90 Days</ToggleButton>
+            </ToggleButtonGroup>
+            <Button startIcon={<Refresh />} onClick={fetchData} variant="outlined">
+              Refresh
+            </Button>
+          </>
+        }
+      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>

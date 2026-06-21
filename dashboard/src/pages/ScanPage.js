@@ -13,6 +13,7 @@ import {
   ListItemText,
   ListItemIcon,
 } from '@mui/material';
+import PageHeader from '../components/PageHeader';
 import SearchIcon from '@mui/icons-material/Search';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { startScan } from '../api';
@@ -62,9 +63,10 @@ function ScanPage() {
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom>
-        New Scan
-      </Typography>
+      <PageHeader
+        title="New Scan"
+        description="Scan a container image for vulnerabilities with Grype, Trivy & Syft"
+      />
 
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>

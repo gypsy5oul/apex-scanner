@@ -27,6 +27,7 @@ import { getImageHistory, getRecentScans } from '../api';
 import SeverityChip from '../components/SeverityChip';
 import { VulnerabilityBar } from '../components/VulnerabilityChart';
 import { TableSkeleton } from '../components/LoadingSkeletons';
+import PageHeader from '../components/PageHeader';
 import { useTableSort, SortableHeadCell } from '../components/SortableTable';
 
 // Stable accessor maps (defined once so the sort memo doesn't thrash).
@@ -102,9 +103,10 @@ function History() {
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom>
-        Scan History
-      </Typography>
+      <PageHeader
+        title="Scan History"
+        description="Search an image's scan history and review recent scans"
+      />
 
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>

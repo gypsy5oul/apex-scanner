@@ -18,6 +18,7 @@ import {
   Divider,
   alpha,
 } from '@mui/material';
+import PageHeader from '../components/PageHeader';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import AddCircleIcon from '@mui/icons-material/AddCircle';
 import RemoveCircleIcon from '@mui/icons-material/RemoveCircle';
@@ -54,9 +55,10 @@ function Compare() {
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom>
-        Compare Scans
-      </Typography>
+      <PageHeader
+        title="Compare Scans"
+        description="Diff two scans to see fixed, new, and unchanged vulnerabilities"
+      />
 
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>
@@ -85,7 +87,7 @@ function Compare() {
               />
             </Grid>
             <Grid item xs={12} md={2} sx={{ textAlign: 'center' }}>
-              <CompareArrowsIcon sx={{ fontSize: 40, color: 'primary.main' }} />
+              <CompareArrowsIcon aria-hidden sx={{ fontSize: 40, color: 'primary.main' }} />
             </Grid>
             <Grid item xs={12} md={5}>
               <TextField

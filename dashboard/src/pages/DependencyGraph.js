@@ -30,6 +30,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import { useTheme } from '@mui/material/styles';
 import { getSeverity, severityAccent } from '../theme/tokens';
 import SeverityChip from '../components/SeverityChip';
+import PageHeader from '../components/PageHeader';
 import { CountUp } from '../components/Motion';
 import { getDependencyGraph, getPackageImpact } from '../api';
 
@@ -186,15 +187,10 @@ function DependencyGraph() {
 
   return (
     <Box>
-      <Box sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
-        <AccountTreeIcon color="primary" sx={{ fontSize: 32 }} />
-        <Box>
-          <Typography variant="h5" fontWeight={700}>Dependency Graph</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Visualize package dependencies and vulnerability hotspots
-          </Typography>
-        </Box>
-      </Box>
+      <PageHeader
+        title="Dependency Graph"
+        description="Visualize package dependencies and vulnerability hotspots"
+      />
 
       {/* Scan ID Input */}
       <Paper sx={{ p: 3, mb: 3 }}>

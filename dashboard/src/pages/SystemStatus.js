@@ -21,6 +21,7 @@ import {
   IconButton,
   Tooltip,
 } from '@mui/material';
+import PageHeader from '../components/PageHeader';
 import {
   Refresh,
   Update,
@@ -141,44 +142,40 @@ function SystemStatus() {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Box>
-          <Typography variant="h4" fontWeight="bold">
-            System Status
-          </Typography>
-          <Typography color="textSecondary">
-            Monitor scanning tools and vulnerability databases
-          </Typography>
-        </Box>
-        <Box display="flex" gap={2}>
-          <Button
-            variant="outlined"
-            startIcon={<Refresh />}
-            onClick={fetchData}
-          >
-            Refresh View
-          </Button>
-          <Tooltip title="Trigger worker to refresh tool versions and DB status">
+      <PageHeader
+        title="System Status"
+        description="Monitor scanning tools and vulnerability databases"
+        actions={
+          <>
             <Button
               variant="outlined"
-              color="secondary"
-              startIcon={refreshing ? <CircularProgress size={20} /> : <Refresh />}
-              onClick={handleRefreshStatus}
-              disabled={refreshing}
+              startIcon={<Refresh />}
+              onClick={fetchData}
             >
-              Refresh Status
+              Refresh View
             </Button>
-          </Tooltip>
-          <Button
-            variant="contained"
-            startIcon={updating ? <CircularProgress size={20} /> : <Update />}
-            onClick={handleUpdateDb}
-            disabled={updating}
-          >
-            Update Databases
-          </Button>
-        </Box>
-      </Box>
+            <Tooltip title="Trigger worker to refresh tool versions and DB status">
+              <Button
+                variant="outlined"
+                color="secondary"
+                startIcon={refreshing ? <CircularProgress size={20} /> : <Refresh />}
+                onClick={handleRefreshStatus}
+                disabled={refreshing}
+              >
+                Refresh Status
+              </Button>
+            </Tooltip>
+            <Button
+              variant="contained"
+              startIcon={updating ? <CircularProgress size={20} /> : <Update />}
+              onClick={handleUpdateDb}
+              disabled={updating}
+            >
+              Update Databases
+            </Button>
+          </>
+        }
+      />
 
       {error && (
         <Alert severity="error" onClose={() => setError(null)} sx={{ mb: 2 }}>

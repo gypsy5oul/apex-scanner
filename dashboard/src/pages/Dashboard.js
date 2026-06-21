@@ -30,6 +30,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import { getStats, healthCheck, getRecentScans } from '../api';
 import { PageHeaderSkeleton, StatCardsSkeleton, CardGridSkeleton } from '../components/LoadingSkeletons';
 import { Reveal, CountUp } from '../components/Motion';
+import PageHeader from '../components/PageHeader';
 
 function StatCard({ title, value, subtitle, icon, color }) {
   return (
@@ -180,29 +181,24 @@ function Dashboard() {
 
   return (
     <Box>
-      {/* Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 4 }}>
-        <Box>
-          <Typography variant="h4" fontWeight={700} gutterBottom>
-            Security Dashboard
-          </Typography>
-          <Typography variant="body1" color="text.secondary">
-            Monitor vulnerabilities and track security posture across your container images
-          </Typography>
-        </Box>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <IconButton onClick={fetchData} sx={{ bgcolor: 'action.hover' }}>
-            <RefreshIcon />
-          </IconButton>
-          <Button
-            variant="contained"
-            startIcon={<PlayArrowIcon />}
-            onClick={() => navigate('/scan')}
-          >
-            New Scan
-          </Button>
-        </Box>
-      </Box>
+      <PageHeader
+        title="Security Dashboard"
+        description="Monitor vulnerabilities and track security posture across your container images"
+        actions={
+          <>
+            <IconButton onClick={fetchData} aria-label="Refresh" sx={{ bgcolor: 'action.hover' }}>
+              <RefreshIcon />
+            </IconButton>
+            <Button
+              variant="contained"
+              startIcon={<PlayArrowIcon />}
+              onClick={() => navigate('/scan')}
+            >
+              New Scan
+            </Button>
+          </>
+        }
+      />
 
       {/* Health Status */}
       {health && (

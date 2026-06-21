@@ -28,10 +28,10 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import WarningIcon from '@mui/icons-material/Warning';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
-import SecurityIcon from '@mui/icons-material/Security';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import SearchIcon from '@mui/icons-material/Search';
 import { getComplianceFrameworks, getComplianceAssessment } from '../api';
+import PageHeader from '../components/PageHeader';
 import { CardGridSkeleton } from '../components/LoadingSkeletons';
 
 const statusColors = {
@@ -284,17 +284,10 @@ function Compliance() {
 
   return (
     <Box>
-      <Box sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
-        <SecurityIcon color="primary" sx={{ fontSize: 32 }} />
-        <Box>
-          <Typography variant="h5" fontWeight={700}>
-            Compliance Assessment
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Evaluate container scans against security compliance frameworks
-          </Typography>
-        </Box>
-      </Box>
+      <PageHeader
+        title="Compliance Assessment"
+        description="Evaluate container scans against security compliance frameworks"
+      />
 
       {/* Scan ID Input */}
       <Paper sx={{ p: 3, mb: 3 }}>

@@ -10,9 +10,13 @@
 export const MONO_FONT =
   '"JetBrains Mono", "Fira Code", ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace';
 
-// UI font stack.
+// UI font stack (body / utility).
 export const UI_FONT =
   '"Inter", "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
+
+// Display font — the Apex brand face (Space Grotesk). Used for headings/titles
+// with restraint, so the brand identity carries through the whole app.
+export const DISPLAY_FONT = '"Space Grotesk", "Inter", sans-serif';
 
 // Slate neutral ramp — used for surfaces, borders, muted text.
 export const slate = {

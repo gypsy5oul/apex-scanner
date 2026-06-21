@@ -1,5 +1,5 @@
 import { createTheme } from '@mui/material/styles';
-import { UI_FONT, MONO_FONT, slate, severityTokens, getGlass, EASING } from './theme/tokens';
+import { UI_FONT, MONO_FONT, DISPLAY_FONT, slate, severityTokens, getGlass, EASING } from './theme/tokens';
 
 // ---------------------------------------------------------------------------
 // Apex Scanner theme.
@@ -67,11 +67,12 @@ const buildShadows = (mode) => {
 
 const typography = {
   fontFamily: UI_FONT,
-  // Headings: tighter, denser — dashboard not marketing site.
-  h1: { fontSize: '2rem', fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.2 },
-  h2: { fontSize: '1.625rem', fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.25 },
-  h3: { fontSize: '1.375rem', fontWeight: 600, letterSpacing: '-0.01em', lineHeight: 1.3 },
-  h4: { fontSize: '1.15rem', fontWeight: 600, letterSpacing: '-0.01em', lineHeight: 1.35 },
+  // Headings use the Space Grotesk display face (brand voice); body/labels stay
+  // on Inter. Tighter/denser than a marketing site.
+  h1: { fontFamily: DISPLAY_FONT, fontSize: '2rem', fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.2 },
+  h2: { fontFamily: DISPLAY_FONT, fontSize: '1.625rem', fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.25 },
+  h3: { fontFamily: DISPLAY_FONT, fontSize: '1.375rem', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.3 },
+  h4: { fontFamily: DISPLAY_FONT, fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.35 },
   h5: { fontSize: '1rem', fontWeight: 600, lineHeight: 1.4 },
   h6: { fontSize: '0.9375rem', fontWeight: 600, lineHeight: 1.4 },
   subtitle1: { fontSize: '0.9375rem', fontWeight: 600 },

@@ -60,6 +60,7 @@ import SeverityChip from '../components/SeverityChip';
 import { VulnerabilityDoughnut } from '../components/VulnerabilityChart';
 import AITriagePanel from '../components/AITriagePanel';
 import { PageHeaderSkeleton, CardGridSkeleton } from '../components/LoadingSkeletons';
+import PageHeader from '../components/PageHeader';
 import { CountUp } from '../components/Motion';
 
 // Rewrite report/SBOM URLs to the current API origin instead of whatever the
@@ -375,16 +376,19 @@ function ScanResults() {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-        <Typography variant="h4">Scan Results</Typography>
-        <Button
-          variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={fetchResult}
-        >
-          Refresh
-        </Button>
-      </Box>
+      <PageHeader
+        title="Scan Results"
+        description={result.image_name}
+        actions={
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={fetchResult}
+          >
+            Refresh
+          </Button>
+        }
+      />
 
       {result.status === 'in_progress' && (
         <Alert severity="info" sx={{ mb: 3 }}>

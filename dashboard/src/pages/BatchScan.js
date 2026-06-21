@@ -12,6 +12,7 @@ import {
   IconButton,
   alpha,
 } from '@mui/material';
+import PageHeader from '../components/PageHeader';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -82,9 +83,10 @@ function BatchScan() {
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom>
-        Batch Scan
-      </Typography>
+      <PageHeader
+        title="Batch Scan"
+        description="Queue multiple images for scanning in a single run"
+      />
 
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>
@@ -121,6 +123,7 @@ function BatchScan() {
                   onClick={() => handleRemoveImage(index)}
                   disabled={loading}
                   color="error"
+                  aria-label={`Remove image ${index + 1}`}
                 >
                   <DeleteIcon />
                 </IconButton>

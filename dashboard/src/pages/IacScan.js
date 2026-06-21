@@ -31,6 +31,7 @@ import {
   Link,
   Divider,
 } from '@mui/material';
+import PageHeader from '../components/PageHeader';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SecurityIcon from '@mui/icons-material/Security';
 import DescriptionIcon from '@mui/icons-material/Description';
@@ -223,16 +224,10 @@ spec:
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-        <SecurityIcon sx={{ fontSize: 32, mr: 1, color: 'primary.main' }} />
-        <Typography variant="h4">IaC Security Scan</Typography>
-      </Box>
-
-      <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-        Scan Infrastructure as Code files for security misconfigurations.
-        Supports Dockerfile, Kubernetes manifests, Terraform, Helm charts, and
-        more.
-      </Typography>
+      <PageHeader
+        title="IaC Security Scan"
+        description="Scan Dockerfiles, Kubernetes manifests, Terraform and Helm charts for misconfigurations"
+      />
 
       <Paper sx={{ mb: 3 }}>
         <Tabs

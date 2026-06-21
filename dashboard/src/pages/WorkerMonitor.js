@@ -29,6 +29,7 @@ import {
   ListItemIcon,
   Divider,
 } from '@mui/material';
+import PageHeader from '../components/PageHeader';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -174,38 +175,35 @@ function WorkerMonitor() {
 
   return (
     <Box>
-      {/* Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Box>
-          <Typography variant="h4">Worker Monitor</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Real-time monitoring of Celery workers and task queues
-          </Typography>
-        </Box>
-        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-          <Chip
-            label={autoRefresh ? 'Auto-refresh ON' : 'Auto-refresh OFF'}
-            color={autoRefresh ? 'success' : 'default'}
-            onClick={() => setAutoRefresh(!autoRefresh)}
-            size="small"
-          />
-          <Button
-            variant="outlined"
-            startIcon={refreshing ? <CircularProgress size={20} /> : <RefreshIcon />}
-            onClick={handleRefresh}
-            disabled={refreshing}
-          >
-            Refresh
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<PlayArrowIcon />}
-            onClick={handlePingWorkers}
-          >
-            Ping Workers
-          </Button>
-        </Box>
-      </Box>
+      <PageHeader
+        title="Worker Monitor"
+        description="Real-time monitoring of Celery workers and task queues"
+        actions={
+          <>
+            <Chip
+              label={autoRefresh ? 'Auto-refresh ON' : 'Auto-refresh OFF'}
+              color={autoRefresh ? 'success' : 'default'}
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              size="small"
+            />
+            <Button
+              variant="outlined"
+              startIcon={refreshing ? <CircularProgress size={20} /> : <RefreshIcon />}
+              onClick={handleRefresh}
+              disabled={refreshing}
+            >
+              Refresh
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<PlayArrowIcon />}
+              onClick={handlePingWorkers}
+            >
+              Ping Workers
+            </Button>
+          </>
+        }
+      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>

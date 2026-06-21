@@ -22,6 +22,7 @@ import {
   TablePagination,
   Chip,
 } from '@mui/material';
+import PageHeader from '../components/PageHeader';
 import SearchIcon from '@mui/icons-material/Search';
 import { searchVulnerabilities } from '../api';
 import SeverityChip from '../components/SeverityChip';
@@ -83,9 +84,10 @@ function Search() {
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom>
-        Search Vulnerabilities
-      </Typography>
+      <PageHeader
+        title="Search CVEs"
+        description="Look up vulnerabilities by CVE ID or keyword across all scans"
+      />
 
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>

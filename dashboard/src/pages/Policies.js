@@ -34,11 +34,11 @@ import {
   InputLabel,
   Divider,
 } from '@mui/material';
+import PageHeader from '../components/PageHeader';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import PolicyIcon from '@mui/icons-material/Policy';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -269,16 +269,10 @@ function Policies() {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-        <PolicyIcon sx={{ fontSize: 32, mr: 1, color: 'primary.main' }} />
-        <Typography variant="h4">Security Policies</Typography>
-      </Box>
-
-      <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-        Define security gates for CI/CD pipelines. Policies evaluate scan
-        results and determine pass/fail status based on vulnerability severity,
-        EPSS scores, and KEV status.
-      </Typography>
+      <PageHeader
+        title="Security Policies"
+        description="Define CI/CD security gates that pass or fail scans on severity, EPSS and KEV"
+      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>

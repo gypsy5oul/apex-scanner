@@ -27,6 +27,7 @@ import {
   IconButton,
   Tooltip,
 } from '@mui/material';
+import PageHeader from '../components/PageHeader';
 import {
   Add,
   Layers,
@@ -173,42 +174,38 @@ function BaseImages() {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Box>
-          <Typography variant="h4" fontWeight="bold">
-            Base Image Tracking
-          </Typography>
-          <Typography color="textSecondary">
-            Track and compare vulnerabilities in base images
-          </Typography>
-        </Box>
-        <Box display="flex" gap={2}>
-          {baseImages.length > 0 && (
+      <PageHeader
+        title="Base Image Tracking"
+        description="Track and compare vulnerabilities in base images"
+        actions={
+          <>
+            {baseImages.length > 0 && (
+              <Button
+                variant="contained"
+                color="success"
+                startIcon={<PlayArrow />}
+                onClick={handleScanAll}
+              >
+                Scan All Now
+              </Button>
+            )}
+            <Button
+              variant="outlined"
+              startIcon={<CompareArrows />}
+              onClick={() => setCompareDialogOpen(true)}
+            >
+              Compare Images
+            </Button>
             <Button
               variant="contained"
-              color="success"
-              startIcon={<PlayArrow />}
-              onClick={handleScanAll}
+              startIcon={<Add />}
+              onClick={() => setDialogOpen(true)}
             >
-              Scan All Now
+              Register Base Image
             </Button>
-          )}
-          <Button
-            variant="outlined"
-            startIcon={<CompareArrows />}
-            onClick={() => setCompareDialogOpen(true)}
-          >
-            Compare Images
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<Add />}
-            onClick={() => setDialogOpen(true)}
-          >
-            Register Base Image
-          </Button>
-        </Box>
-      </Box>
+          </>
+        }
+      />
 
       {error && (
         <Alert severity="error" onClose={() => setError(null)} sx={{ mb: 2 }}>
