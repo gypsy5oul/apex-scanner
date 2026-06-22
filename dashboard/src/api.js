@@ -60,6 +60,11 @@ api.interceptors.response.use((response) => response, on401Response);
 apiV2.interceptors.request.use((config) => config, onRequestError);
 apiV2.interceptors.response.use((response) => response, on401Response);
 
+// Export the shared axios instances so pages can issue ad-hoc calls without
+// rolling their own (and re-introducing the legacy :7070 / mixed-content bug).
+// Both carry the same-origin baseURL and the 401-redirect interceptor.
+export { api, apiV2, API_BASE_URL };
+
 // ============ V1 Endpoints ============
 
 // Scan endpoints

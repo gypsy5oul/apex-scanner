@@ -44,19 +44,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { useAuth } from '../context/AuthContext';
-import axios from 'axios';
-
-// Create apiV2 instance for /api/v2 endpoints
-const getApiUrl = () => {
-  const host = window.location.hostname;
-  return `http://${host}:7070`;
-};
-
-const apiV2 = axios.create({
-  baseURL: `${getApiUrl()}/api/v2`,
-  headers: { 'Content-Type': 'application/json' },
-  withCredentials: true,
-});
+import { apiV2 } from '../api';
 
 const ruleFields = [
   { value: 'severity', label: 'Severity', type: 'select' },

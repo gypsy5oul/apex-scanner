@@ -43,19 +43,7 @@ import WarningIcon from '@mui/icons-material/Warning';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { useAuth } from '../context/AuthContext';
-import axios from 'axios';
-
-// Create apiV2 instance for /api/v2 endpoints
-const getApiUrl = () => {
-  const host = window.location.hostname;
-  return `http://${host}:7070`;
-};
-
-const apiV2 = axios.create({
-  baseURL: `${getApiUrl()}/api/v2`,
-  headers: { 'Content-Type': 'application/json' },
-  withCredentials: true,
-});
+import { apiV2 } from '../api';
 
 const severityColors = {
   CRITICAL: 'error',
