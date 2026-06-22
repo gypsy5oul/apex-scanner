@@ -17,6 +17,7 @@ from app.scanners.orchestrator import ScannerOrchestrator
 from app.scanner_errors import classify_scanner_errors, summarize_scan_failure
 from app.license_compliance import evaluate as evaluate_licenses, to_dict as licenses_to_dict
 from app.logging_config import get_logger, configure_logging, LogContext
+from app.trends import TrendAnalyzer
 from app.metrics import (
     SCANS_IN_PROGRESS, SCANS_COMPLETED, SCAN_DURATION,
     VULNERABILITIES_FOUND, SECRETS_FOUND, PACKAGES_FOUND,
@@ -924,6 +925,33 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = True) -> 
             }
 
             redis_client.hset(scan_id, mapping=redis_result)
+
+            # Record trend metrics so the Trends dashboard has historical data.
+            # Best-effort: a bookkeeping failure must never fail the scan itself.
+            try:
+                _trend_total = (
+                    redis_result["critical"] + redis_result["high"]
+                    + redis_result["medium"] + redis_result["low"]
+                    + redis_result.get("negligible", 0) + redis_result.get("unknown", 0)
+                )
+                _trend_fixable = (
+                    redis_result["fixable_critical"] + redis_result["fixable_high"]
+                    + redis_result["fixable_medium"] + redis_result["fixable_low"]
+                )
+                TrendAnalyzer().record_scan_metrics(scan_id, image_name, {
+                    "critical": redis_result["critical"],
+                    "high": redis_result["high"],
+                    "medium": redis_result["medium"],
+                    "low": redis_result["low"],
+                    "total": _trend_total,
+                    "packages": redis_result["total_packages"],
+                    "fixable": _trend_fixable,
+                })
+            except Exception as _trend_err:
+                logger.warning(
+                    "Failed to record trend metrics",
+                    scan_id=scan_id, error=str(_trend_err)
+                )
 
             # Cache by digest for future identical image scans
             # Only cache full-quality scans — degraded results (scanner failures)

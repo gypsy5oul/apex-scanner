@@ -242,6 +242,14 @@ class TrendAnalyzer:
         # Sort by date ascending
         daily_data.sort(key=lambda x: x["date"])
 
+        # Distinct images across the whole window = union of each day's image set
+        # (smembers returns a set per day; union them, don't nest them).
+        unique_images_window = set()
+        for d in daily_data:
+            unique_images_window |= self.redis.smembers(
+                f"{self.TREND_KEY_PREFIX}:images:{d['date']}"
+            )
+
         # Calculate totals
         totals = {
             "total_scans": sum(d["total_scans"] for d in daily_data),
@@ -249,10 +257,7 @@ class TrendAnalyzer:
             "total_high": sum(d["total_high"] for d in daily_data),
             "total_medium": sum(d["total_medium"] for d in daily_data),
             "total_low": sum(d["total_low"] for d in daily_data),
-            "unique_images_scanned": len(set(
-                self.redis.smembers(f"{self.TREND_KEY_PREFIX}:images:{d['date']}")
-                for d in daily_data
-            ))
+            "unique_images_scanned": len(unique_images_window),
         }
 
         # Calculate week-over-week change
