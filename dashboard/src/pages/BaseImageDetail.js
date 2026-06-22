@@ -20,22 +20,18 @@ import {
   DialogActions,
   TextField,
   Alert,
-  CircularProgress,
   Grid,
-  Divider,
   IconButton,
-  Tooltip,
-  LinearProgress,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import PageHeader from '../components/PageHeader';
+import { StatCardsSkeleton, CardGridSkeleton } from '../components/LoadingSkeletons';
+import SeverityChip from '../components/SeverityChip';
+import { severityAccent, MONO_FONT } from '../theme/tokens';
 import {
   ArrowBack,
   Edit,
   Refresh,
-  TrendingUp,
-  TrendingDown,
-  TrendingFlat,
   Security,
   Schedule,
   Assessment,
@@ -100,6 +96,15 @@ function BaseImageDetail() {
     }
   };
 
+  // Risk tier maps to a severity token so the score, its chip, and the trend
+  // chart all draw from the same severity color source.
+  const getRiskSeverity = (score) => {
+    if (score >= 80) return 'critical';
+    if (score >= 50) return 'high';
+    if (score >= 20) return 'medium';
+    return 'low';
+  };
+
   const getRiskColor = (score) => {
     if (score >= 80) return 'error';
     if (score >= 50) return 'warning';
@@ -114,10 +119,36 @@ function BaseImageDetail() {
     return 'Low';
   };
 
+  // Severity accent color from the central token scale (matches the trend chart).
+  const sevColor = (severity) => ({ color: severityAccent(severity, theme.palette.mode) });
+
+  // sx for a count chip tinted by the severity token (filled when > 0).
+  const sevCountSx = (severity, count) => {
+    const accent = severityAccent(severity, theme.palette.mode);
+    return count > 0
+      ? { bgcolor: accent, color: theme.palette.getContrastText(accent), fontWeight: 700 }
+      : { borderColor: accent, color: accent, bgcolor: 'transparent', border: 1, fontWeight: 700 };
+  };
+
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
+      <Box>
+        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 3 }}>
+          <IconButton
+            onClick={() => navigate('/base-images')}
+            aria-label="Back to base images"
+            sx={{ mt: 0.25 }}
+          >
+            <ArrowBack />
+          </IconButton>
+          <PageHeader
+            sx={{ flex: 1, mb: 0 }}
+            title={`${decodedImageName}:${decodedTag}`}
+            description="Loading base image details…"
+          />
+        </Box>
+        <StatCardsSkeleton count={3} />
+        <CardGridSkeleton count={2} height={200} cols={{ xs: 12, md: 6 }} />
       </Box>
     );
   }
@@ -205,7 +236,7 @@ function BaseImageDetail() {
                 <Typography variant="h6">Risk Score</Typography>
               </Box>
               <Box display="flex" alignItems="baseline" gap={1}>
-                <Typography variant="h2" fontWeight="bold" color={`${getRiskColor(risk_score)}.main`}>
+                <Typography variant="h2" fontWeight="bold" sx={sevColor(getRiskSeverity(risk_score))}>
                   {risk_score || 0}
                 </Typography>
                 <Typography variant="h6" color="textSecondary">/ 100</Typography>
@@ -259,10 +290,10 @@ function BaseImageDetail() {
                 {(vulns.critical || 0) + (vulns.high || 0) + (vulns.medium || 0) + (vulns.low || 0)}
               </Typography>
               <Box display="flex" gap={1} mt={1} flexWrap="wrap">
-                <Chip label={`${vulns.critical || 0} Critical`} color="error" size="small" />
-                <Chip label={`${vulns.high || 0} High`} color="warning" size="small" />
-                <Chip label={`${vulns.medium || 0} Medium`} size="small" />
-                <Chip label={`${vulns.low || 0} Low`} color="success" size="small" />
+                <SeverityChip severity="critical" count={vulns.critical || 0} />
+                <SeverityChip severity="high" count={vulns.high || 0} />
+                <SeverityChip severity="medium" count={vulns.medium || 0} />
+                <SeverityChip severity="low" count={vulns.low || 0} />
               </Box>
             </CardContent>
           </Card>
@@ -274,7 +305,7 @@ function BaseImageDetail() {
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom color="success.main">
+              <Typography variant="h6" gutterBottom sx={sevColor('low')}>
                 Fixable Vulnerabilities
               </Typography>
               <Typography variant="caption" color="textSecondary" display="block" mb={2}>
@@ -283,19 +314,19 @@ function BaseImageDetail() {
               <Grid container spacing={2}>
                 <Grid item xs={3}>
                   <Typography variant="caption" color="textSecondary">Critical</Typography>
-                  <Typography variant="h4" color="error">{vulns.fixable_critical || 0}</Typography>
+                  <Typography variant="h4" sx={sevColor('critical')}>{vulns.fixable_critical || 0}</Typography>
                 </Grid>
                 <Grid item xs={3}>
                   <Typography variant="caption" color="textSecondary">High</Typography>
-                  <Typography variant="h4" color="warning.main">{vulns.fixable_high || 0}</Typography>
+                  <Typography variant="h4" sx={sevColor('high')}>{vulns.fixable_high || 0}</Typography>
                 </Grid>
                 <Grid item xs={3}>
                   <Typography variant="caption" color="textSecondary">Medium</Typography>
-                  <Typography variant="h4">{vulns.fixable_medium || 0}</Typography>
+                  <Typography variant="h4" sx={sevColor('medium')}>{vulns.fixable_medium || 0}</Typography>
                 </Grid>
                 <Grid item xs={3}>
                   <Typography variant="caption" color="textSecondary">Low</Typography>
-                  <Typography variant="h4" color="success.main">{vulns.fixable_low || 0}</Typography>
+                  <Typography variant="h4" sx={sevColor('low')}>{vulns.fixable_low || 0}</Typography>
                 </Grid>
               </Grid>
             </CardContent>
@@ -314,25 +345,25 @@ function BaseImageDetail() {
               <Grid container spacing={2}>
                 <Grid item xs={3}>
                   <Typography variant="caption" color="textSecondary">Critical</Typography>
-                  <Typography variant="h4" color="error">
+                  <Typography variant="h4" sx={sevColor('critical')}>
                     {(vulns.critical || 0) - (vulns.fixable_critical || 0)}
                   </Typography>
                 </Grid>
                 <Grid item xs={3}>
                   <Typography variant="caption" color="textSecondary">High</Typography>
-                  <Typography variant="h4" color="warning.main">
+                  <Typography variant="h4" sx={sevColor('high')}>
                     {(vulns.high || 0) - (vulns.fixable_high || 0)}
                   </Typography>
                 </Grid>
                 <Grid item xs={3}>
                   <Typography variant="caption" color="textSecondary">Medium</Typography>
-                  <Typography variant="h4">
+                  <Typography variant="h4" sx={sevColor('medium')}>
                     {(vulns.medium || 0) - (vulns.fixable_medium || 0)}
                   </Typography>
                 </Grid>
                 <Grid item xs={3}>
                   <Typography variant="caption" color="textSecondary">Low</Typography>
-                  <Typography variant="h4" color="success.main">
+                  <Typography variant="h4" sx={sevColor('low')}>
                     {(vulns.low || 0) - (vulns.fixable_low || 0)}
                   </Typography>
                 </Grid>
@@ -343,13 +374,21 @@ function BaseImageDetail() {
       </Grid>
 
       {/* Vulnerability Trend Chart */}
-      {chartData.length > 0 && (
-        <Card sx={{ mb: 3 }}>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Vulnerability Trend
-            </Typography>
-            <Box height={300}>
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Typography variant="h6" gutterBottom>
+            Vulnerability Trend
+          </Typography>
+          {chartData.length > 0 ? (
+            <Box
+              height={300}
+              role="img"
+              aria-label={`Vulnerability trend over ${chartData.length} scans. Latest counts — Critical ${chartData[chartData.length - 1].Critical}, High ${chartData[chartData.length - 1].High}, Medium ${chartData[chartData.length - 1].Medium}, Low ${chartData[chartData.length - 1].Low}.`}
+            >
+              {/* Screen-reader summary (chart itself is decorative SVG) */}
+              <Box sx={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>
+                Vulnerability counts across the {chartData.length} most recent scans, broken down by Critical, High, Medium, and Low severity.
+              </Box>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -358,15 +397,25 @@ function BaseImageDetail() {
                   <RechartsTooltip />
                   <Legend />
                   <Line type="monotone" dataKey="Critical" stroke={theme.palette.severity.critical} strokeWidth={2} />
-                  <Line type="monotone" dataKey="High" stroke={theme.palette.severity.high} strokeWidth={2} />
-                  <Line type="monotone" dataKey="Medium" stroke={theme.palette.severity.medium} strokeWidth={2} />
-                  <Line type="monotone" dataKey="Low" stroke={theme.palette.severity.low} strokeWidth={2} />
+                  <Line type="monotone" dataKey="High" stroke={theme.palette.severity.high} strokeWidth={2} strokeDasharray="6 3" />
+                  <Line type="monotone" dataKey="Medium" stroke={theme.palette.severity.medium} strokeWidth={2} strokeDasharray="3 3" />
+                  <Line type="monotone" dataKey="Low" stroke={theme.palette.severity.low} strokeWidth={2} strokeDasharray="1 3" />
                 </LineChart>
               </ResponsiveContainer>
             </Box>
-          </CardContent>
-        </Card>
-      )}
+          ) : (
+            <Box sx={{ height: 220, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+              <Assessment sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
+              <Typography color="text.secondary">
+                Not enough scan history to plot a trend
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Trends appear after at least two scans of this base image.
+              </Typography>
+            </Box>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Recent Scans Table */}
       <Card>
@@ -390,9 +439,9 @@ function BaseImageDetail() {
                 </TableHead>
                 <TableBody>
                   {recent_scans.map((scan, index) => (
-                    <TableRow key={index} hover>
+                    <TableRow key={scan.scan_id || index} hover>
                       <TableCell>
-                        <Typography variant="body2" fontFamily="monospace">
+                        <Typography variant="body2" sx={{ fontFamily: MONO_FONT }}>
                           {scan.scan_id?.substring(0, 8) || 'N/A'}...
                         </Typography>
                       </TableCell>
@@ -402,32 +451,29 @@ function BaseImageDetail() {
                       <TableCell align="center">
                         <Chip
                           label={scan.vulns?.critical || 0}
-                          color="error"
                           size="small"
-                          variant={scan.vulns?.critical > 0 ? 'filled' : 'outlined'}
+                          sx={sevCountSx('critical', scan.vulns?.critical || 0)}
                         />
                       </TableCell>
                       <TableCell align="center">
                         <Chip
                           label={scan.vulns?.high || 0}
-                          color="warning"
                           size="small"
-                          variant={scan.vulns?.high > 0 ? 'filled' : 'outlined'}
+                          sx={sevCountSx('high', scan.vulns?.high || 0)}
                         />
                       </TableCell>
                       <TableCell align="center">
                         <Chip
                           label={scan.vulns?.medium || 0}
                           size="small"
-                          variant={scan.vulns?.medium > 0 ? 'filled' : 'outlined'}
+                          sx={sevCountSx('medium', scan.vulns?.medium || 0)}
                         />
                       </TableCell>
                       <TableCell align="center">
                         <Chip
                           label={scan.vulns?.low || 0}
-                          color="success"
                           size="small"
-                          variant={scan.vulns?.low > 0 ? 'filled' : 'outlined'}
+                          sx={sevCountSx('low', scan.vulns?.low || 0)}
                         />
                       </TableCell>
                       <TableCell align="center">

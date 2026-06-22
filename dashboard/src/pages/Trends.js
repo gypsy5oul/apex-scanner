@@ -15,13 +15,17 @@ import {
   TableRow,
   Paper,
   Chip,
-  CircularProgress,
   Alert,
+  CircularProgress,
   ToggleButton,
   ToggleButtonGroup,
   useTheme,
+  alpha,
 } from '@mui/material';
 import PageHeader from '../components/PageHeader';
+import { StatCardsSkeleton, CardGridSkeleton } from '../components/LoadingSkeletons';
+import { useToast } from '../components/Feedback';
+import { MONO_FONT } from '../theme/tokens';
 import {
   TrendingUp,
   TrendingDown,
@@ -57,7 +61,9 @@ ChartJS.register(
 
 function Trends() {
   const theme = useTheme();
+  const toast = useToast();
   const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
   const [error, setError] = useState(null);
   const [period, setPeriod] = useState(30);
   const [globalTrends, setGlobalTrends] = useState(null);
@@ -80,7 +86,7 @@ function Trends() {
       setDistribution(distRes.data);
     } catch (err) {
       setError('Failed to fetch trends data');
-      console.error(err);
+      toast('Failed to fetch trends data: ' + (err.response?.data?.detail || err.message), 'error');
     } finally {
       setLoading(false);
     }
@@ -92,11 +98,14 @@ function Trends() {
 
   const handleImageSearch = async () => {
     if (!imageSearch.trim()) return;
+    setSearching(true);
     try {
       const res = await getImageTrends(imageSearch, period);
       setImageTrends(res.data);
     } catch (err) {
-      console.error(err);
+      toast('Image search failed: ' + (err.response?.data?.detail || err.message), 'error');
+    } finally {
+      setSearching(false);
     }
   };
 
@@ -118,16 +127,16 @@ function Trends() {
           {
             label: 'Critical',
             data: globalTrends.daily_data.map((d) => d.total_critical),
-            borderColor: theme.palette.error.main,
-            backgroundColor: `${theme.palette.error.main}20`,
+            borderColor: theme.palette.severity.critical,
+            backgroundColor: alpha(theme.palette.severity.critical, 0.12),
             fill: true,
             tension: 0.4,
           },
           {
             label: 'High',
             data: globalTrends.daily_data.map((d) => d.total_high),
-            borderColor: theme.palette.warning.main,
-            backgroundColor: `${theme.palette.warning.main}20`,
+            borderColor: theme.palette.severity.high,
+            backgroundColor: alpha(theme.palette.severity.high, 0.12),
             fill: true,
             tension: 0.4,
           },
@@ -135,7 +144,7 @@ function Trends() {
             label: 'Medium',
             data: globalTrends.daily_data.map((d) => d.total_medium),
             borderColor: theme.palette.severity.medium,
-            backgroundColor: `${theme.palette.severity.medium}20`,
+            backgroundColor: alpha(theme.palette.severity.medium, 0.12),
             fill: true,
             tension: 0.4,
           },
@@ -148,6 +157,7 @@ function Trends() {
         labels: ['Critical', 'High', 'Medium', 'Low'],
         datasets: [
           {
+            label: 'Findings by severity',
             data: [
               distribution.distribution.critical?.count || 0,
               distribution.distribution.high?.count || 0,
@@ -167,8 +177,13 @@ function Trends() {
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
+      <Box>
+        <PageHeader
+          title="Vulnerability Trends"
+          description="How critical, high, medium and low findings move over time"
+        />
+        <StatCardsSkeleton count={4} />
+        <CardGridSkeleton count={2} height={340} cols={{ xs: 12, md: 6 }} />
       </Box>
     );
   }
@@ -208,13 +223,13 @@ function Trends() {
         <Grid item xs={12} sm={6} md={3}>
           <Card>
             <CardContent>
-              <Typography color="textSecondary" gutterBottom>
+              <Typography color="text.secondary" gutterBottom>
                 Total Scans
               </Typography>
-              <Typography variant="h4" fontWeight="bold">
+              <Typography variant="h4" fontWeight="bold" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                 {globalTrends?.totals?.total_scans || 0}
               </Typography>
-              <Typography variant="body2" color="textSecondary">
+              <Typography variant="body2" color="text.secondary">
                 Last {period} days
               </Typography>
             </CardContent>
@@ -223,10 +238,14 @@ function Trends() {
         <Grid item xs={12} sm={6} md={3}>
           <Card>
             <CardContent>
-              <Typography color="textSecondary" gutterBottom>
+              <Typography color="text.secondary" gutterBottom>
                 Total Critical
               </Typography>
-              <Typography variant="h4" fontWeight="bold" color="error">
+              <Typography
+                variant="h4"
+                fontWeight="bold"
+                sx={{ color: theme.palette.severity.critical, fontVariantNumeric: 'tabular-nums' }}
+              >
                 {globalTrends?.totals?.total_critical || 0}
               </Typography>
               {globalTrends?.week_over_week && (
@@ -243,13 +262,17 @@ function Trends() {
         <Grid item xs={12} sm={6} md={3}>
           <Card>
             <CardContent>
-              <Typography color="textSecondary" gutterBottom>
+              <Typography color="text.secondary" gutterBottom>
                 Total High
               </Typography>
-              <Typography variant="h4" fontWeight="bold" color="warning.main">
+              <Typography
+                variant="h4"
+                fontWeight="bold"
+                sx={{ color: theme.palette.severity.high, fontVariantNumeric: 'tabular-nums' }}
+              >
                 {globalTrends?.totals?.total_high || 0}
               </Typography>
-              <Typography variant="body2" color="textSecondary">
+              <Typography variant="body2" color="text.secondary">
                 Needs attention
               </Typography>
             </CardContent>
@@ -258,13 +281,13 @@ function Trends() {
         <Grid item xs={12} sm={6} md={3}>
           <Card>
             <CardContent>
-              <Typography color="textSecondary" gutterBottom>
+              <Typography color="text.secondary" gutterBottom>
                 Daily Average
               </Typography>
-              <Typography variant="h4" fontWeight="bold">
+              <Typography variant="h4" fontWeight="bold" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                 {globalTrends?.averages?.daily_scans || 0}
               </Typography>
-              <Typography variant="body2" color="textSecondary">
+              <Typography variant="body2" color="text.secondary">
                 Scans per day
               </Typography>
             </CardContent>
@@ -280,21 +303,34 @@ function Trends() {
               <Typography variant="h6" gutterBottom>
                 Vulnerability Trend Over Time
               </Typography>
-              {chartData && (
+              {chartData ? (
                 <Box height={300}>
                   <Line
                     data={chartData}
                     options={{
                       responsive: true,
                       maintainAspectRatio: false,
+                      interaction: { mode: 'index', intersect: false },
                       plugins: {
                         legend: { position: 'top' },
+                        tooltip: { enabled: true },
                       },
                       scales: {
                         y: { beginAtZero: true },
                       },
                     }}
                   />
+                </Box>
+              ) : (
+                <Box
+                  height={300}
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                >
+                  <Typography variant="body2" color="text.secondary">
+                    No trend data yet — run scans to build history
+                  </Typography>
                 </Box>
               )}
             </CardContent>
@@ -306,7 +342,7 @@ function Trends() {
               <Typography variant="h6" gutterBottom>
                 Severity Distribution
               </Typography>
-              {distributionData && (
+              {distributionData ? (
                 <Box height={300}>
                   <Bar
                     data={distributionData}
@@ -314,10 +350,26 @@ function Trends() {
                       responsive: true,
                       maintainAspectRatio: false,
                       plugins: {
-                        legend: { display: false },
+                        legend: { display: true, position: 'top' },
+                        tooltip: { enabled: true },
+                      },
+                      scales: {
+                        x: { ticks: { display: true } },
+                        y: { beginAtZero: true },
                       },
                     }}
                   />
+                </Box>
+              ) : (
+                <Box
+                  height={300}
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                >
+                  <Typography variant="body2" color="text.secondary">
+                    No trend data yet — run scans to build history
+                  </Typography>
                 </Box>
               )}
             </CardContent>
@@ -337,15 +389,20 @@ function Trends() {
               placeholder="Enter image name (e.g., nginx:latest)"
               value={imageSearch}
               onChange={(e) => setImageSearch(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleImageSearch()}
+              onKeyDown={(e) => e.key === 'Enter' && handleImageSearch()}
             />
-            <Button variant="contained" onClick={handleImageSearch}>
+            <Button
+              variant="contained"
+              onClick={handleImageSearch}
+              disabled={searching || !imageSearch.trim()}
+              startIcon={searching ? <CircularProgress size={20} color="inherit" /> : null}
+            >
               Search
             </Button>
           </Box>
           {imageTrends && (
             <Box>
-              <Typography variant="body2" color="textSecondary" mb={2}>
+              <Typography variant="body2" color="text.secondary" mb={2}>
                 Found {imageTrends.data_points} data points for {imageTrends.image_name}
               </Typography>
               {imageTrends.trend_direction && (
@@ -358,7 +415,7 @@ function Trends() {
                           <Typography variant="body2" textTransform="capitalize">
                             {severity}
                           </Typography>
-                          <Typography variant="body2" color="textSecondary">
+                          <Typography variant="body2" color="text.secondary">
                             {trend.change > 0 ? '+' : ''}{trend.change}
                           </Typography>
                         </Box>
@@ -391,40 +448,50 @@ function Trends() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {topVulnerable.map((image, index) => (
-                  <TableRow key={index}>
-                    <TableCell>
-                      <Typography variant="body2" fontFamily="monospace">
-                        {image.image_name}
+                {topVulnerable.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        No vulnerable images yet — run scans to populate this list
                       </Typography>
                     </TableCell>
-                    <TableCell align="center">
-                      <Chip
-                        label={image.critical}
-                        size="small"
-                        color="error"
-                        variant={image.critical > 0 ? 'filled' : 'outlined'}
-                      />
-                    </TableCell>
-                    <TableCell align="center">
-                      <Chip
-                        label={image.high}
-                        size="small"
-                        color="warning"
-                        variant={image.high > 0 ? 'filled' : 'outlined'}
-                      />
-                    </TableCell>
-                    <TableCell align="center">
-                      <Chip label={image.medium} size="small" variant="outlined" />
-                    </TableCell>
-                    <TableCell align="center">
-                      <Chip label={image.low} size="small" color="success" variant="outlined" />
-                    </TableCell>
-                    <TableCell align="center">
-                      <Typography fontWeight="bold">{image.risk_score}</Typography>
-                    </TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  topVulnerable.map((image, index) => (
+                    <TableRow key={index}>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontFamily: MONO_FONT }}>
+                          {image.image_name}
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="center" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                        <Chip
+                          label={image.critical}
+                          size="small"
+                          color="error"
+                          variant={image.critical > 0 ? 'filled' : 'outlined'}
+                        />
+                      </TableCell>
+                      <TableCell align="center" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                        <Chip
+                          label={image.high}
+                          size="small"
+                          color="warning"
+                          variant={image.high > 0 ? 'filled' : 'outlined'}
+                        />
+                      </TableCell>
+                      <TableCell align="center" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                        <Chip label={image.medium} size="small" variant="outlined" />
+                      </TableCell>
+                      <TableCell align="center" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                        <Chip label={image.low} size="small" color="success" variant="outlined" />
+                      </TableCell>
+                      <TableCell align="center" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                        <Typography fontWeight="bold">{image.risk_score}</Typography>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </TableContainer>

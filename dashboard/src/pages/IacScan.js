@@ -16,9 +16,6 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   FormControl,
   InputLabel,
   Select,
@@ -28,10 +25,12 @@ import {
   Card,
   CardContent,
   Grid,
-  Link,
   Divider,
 } from '@mui/material';
 import PageHeader from '../components/PageHeader';
+import SeverityChip from '../components/SeverityChip';
+import { getSeverity } from '../theme/tokens';
+import { useToast } from '../components/Feedback';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SecurityIcon from '@mui/icons-material/Security';
 import DescriptionIcon from '@mui/icons-material/Description';
@@ -39,19 +38,10 @@ import GitHubIcon from '@mui/icons-material/GitHub';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
-import WarningIcon from '@mui/icons-material/Warning';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import RefreshIcon from '@mui/icons-material/Refresh';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { useAuth } from '../context/AuthContext';
 import { apiV2 } from '../api';
-
-const severityColors = {
-  CRITICAL: 'error',
-  HIGH: 'error',
-  MEDIUM: 'warning',
-  LOW: 'info',
-  UNKNOWN: 'default',
-};
 
 const severityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, UNKNOWN: 4 };
 
@@ -65,6 +55,7 @@ function TabPanel({ children, value, index, ...other }) {
 
 function IacScan() {
   const { isAuthenticated } = useAuth();
+  const toast = useToast();
   const [tabValue, setTabValue] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -84,6 +75,9 @@ function IacScan() {
   const [policies, setPolicies] = useState([]);
   const [selectedPolicy, setSelectedPolicy] = useState('');
 
+  // Which finding row is expanded (single expand control per row)
+  const [expandedRow, setExpandedRow] = useState(null);
+
   // Load policies
   useEffect(() => {
     const fetchPolicies = async () => {
@@ -91,11 +85,11 @@ function IacScan() {
         const response = await apiV2.get('/policies');
         setPolicies(response.data.policies || []);
       } catch (err) {
-        console.error('Failed to load policies:', err);
+        toast('Failed to load policies: ' + (err.response?.data?.detail || err.message), 'error');
       }
     };
     fetchPolicies();
-  }, []);
+  }, [toast]);
 
   const handleScanContent = async () => {
     if (!fileContent.trim()) {
@@ -201,6 +195,7 @@ spec:
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
+    toast('Copied', 'success');
   };
 
   const sortedFindings = result?.findings
@@ -426,58 +421,26 @@ spec:
 
           {/* Summary Cards */}
           <Grid container spacing={2} sx={{ mb: 3 }}>
-            <Grid item xs={6} md={3}>
-              <Card
-                sx={{
-                  bgcolor: 'error.dark',
-                  color: 'white',
-                }}
-              >
-                <CardContent sx={{ textAlign: 'center', py: 2 }}>
-                  <Typography variant="h3">{result.summary?.critical || 0}</Typography>
-                  <Typography variant="body2">Critical</Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={6} md={3}>
-              <Card
-                sx={{
-                  bgcolor: 'error.main',
-                  color: 'white',
-                }}
-              >
-                <CardContent sx={{ textAlign: 'center', py: 2 }}>
-                  <Typography variant="h3">{result.summary?.high || 0}</Typography>
-                  <Typography variant="body2">High</Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={6} md={3}>
-              <Card
-                sx={{
-                  bgcolor: 'warning.main',
-                  color: 'white',
-                }}
-              >
-                <CardContent sx={{ textAlign: 'center', py: 2 }}>
-                  <Typography variant="h3">{result.summary?.medium || 0}</Typography>
-                  <Typography variant="body2">Medium</Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={6} md={3}>
-              <Card
-                sx={{
-                  bgcolor: 'info.main',
-                  color: 'white',
-                }}
-              >
-                <CardContent sx={{ textAlign: 'center', py: 2 }}>
-                  <Typography variant="h3">{result.summary?.low || 0}</Typography>
-                  <Typography variant="body2">Low</Typography>
-                </CardContent>
-              </Card>
-            </Grid>
+            {[
+              { key: 'critical', label: 'Critical' },
+              { key: 'high', label: 'High' },
+              { key: 'medium', label: 'Medium' },
+              { key: 'low', label: 'Low' },
+            ].map(({ key, label }) => {
+              const token = getSeverity(key);
+              return (
+                <Grid item xs={6} md={3} key={key}>
+                  <Card sx={{ bgcolor: token.solid, color: token.onSolid }}>
+                    <CardContent sx={{ textAlign: 'center', py: 2 }}>
+                      <Typography variant="h3">
+                        {result.summary?.[key] || 0}
+                      </Typography>
+                      <Typography variant="body2">{label}</Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              );
+            })}
           </Grid>
 
           {/* Policy Result */}
@@ -509,6 +472,7 @@ spec:
               <Table size="small">
                 <TableHead>
                   <TableRow>
+                    <TableCell sx={{ width: 48 }} />
                     <TableCell>Severity</TableCell>
                     <TableCell>ID</TableCell>
                     <TableCell>Title</TableCell>
@@ -521,17 +485,34 @@ spec:
                   {sortedFindings.map((finding, index) => (
                     <React.Fragment key={index}>
                       <TableRow
-                        sx={{
-                          '&:hover': { bgcolor: 'action.hover' },
-                          cursor: 'pointer',
-                        }}
+                        sx={{ '&:hover': { bgcolor: 'action.hover' } }}
                       >
-                        <TableCell>
-                          <Chip
-                            label={finding.severity}
-                            color={severityColors[finding.severity] || 'default'}
+                        <TableCell sx={{ py: 0 }}>
+                          <IconButton
                             size="small"
-                          />
+                            aria-label={
+                              expandedRow === index
+                                ? 'Collapse details'
+                                : 'Expand details & remediation'
+                            }
+                            onClick={() =>
+                              setExpandedRow(expandedRow === index ? null : index)
+                            }
+                          >
+                            <ExpandMoreIcon
+                              fontSize="small"
+                              sx={{
+                                transform:
+                                  expandedRow === index
+                                    ? 'rotate(180deg)'
+                                    : 'none',
+                                transition: 'transform 0.2s',
+                              }}
+                            />
+                          </IconButton>
+                        </TableCell>
+                        <TableCell>
+                          <SeverityChip severity={finding.severity} />
                         </TableCell>
                         <TableCell>
                           <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
@@ -571,27 +552,24 @@ spec:
                         </TableCell>
                         <TableCell>
                           {finding.primary_url && (
-                            <Tooltip title="View Details">
+                            <Tooltip title="View advisory">
                               <IconButton
                                 size="small"
+                                aria-label="Open advisory in new tab"
                                 href={finding.primary_url}
                                 target="_blank"
+                                rel="noopener noreferrer"
                               >
-                                <Link fontSize="small" />
+                                <OpenInNewIcon fontSize="small" />
                               </IconButton>
                             </Tooltip>
                           )}
                         </TableCell>
                       </TableRow>
-                      <TableRow>
-                        <TableCell colSpan={6} sx={{ py: 0 }}>
-                          <Accordion elevation={0}>
-                            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                              <Typography variant="body2" color="text.secondary">
-                                View Details & Remediation
-                              </Typography>
-                            </AccordionSummary>
-                            <AccordionDetails>
+                      {expandedRow === index && (
+                        <TableRow>
+                          <TableCell colSpan={7} sx={{ bgcolor: 'action.hover' }}>
+                            <Box sx={{ py: 1 }}>
                               <Grid container spacing={2}>
                                 <Grid item xs={12} md={6}>
                                   <Typography
@@ -637,6 +615,7 @@ spec:
                                       >
                                         <IconButton
                                           size="small"
+                                          aria-label="Copy code snippet"
                                           sx={{
                                             position: 'absolute',
                                             top: 4,
@@ -657,10 +636,10 @@ spec:
                                   )}
                                 </Grid>
                               </Grid>
-                            </AccordionDetails>
-                          </Accordion>
-                        </TableCell>
-                      </TableRow>
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                      )}
                     </React.Fragment>
                   ))}
                 </TableBody>
@@ -676,8 +655,11 @@ spec:
           {/* Scan Metadata */}
           <Divider sx={{ my: 3 }} />
           <Typography variant="body2" color="text.secondary">
-            Scan ID: {result.scan_id} | Scanned at: {result.scanned_at} | Files
-            scanned: {result.files_scanned}
+            Scan ID: {result.scan_id} | Scanned at:{' '}
+            {result.scanned_at
+              ? new Date(result.scanned_at).toLocaleString()
+              : '—'}{' '}
+            | Files scanned: {result.files_scanned}
           </Typography>
         </Paper>
       )}

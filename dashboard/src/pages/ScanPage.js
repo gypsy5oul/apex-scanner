@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -9,7 +9,7 @@ import {
   Alert,
   CircularProgress,
   List,
-  ListItem,
+  ListItemButton,
   ListItemText,
   ListItemIcon,
 } from '@mui/material';
@@ -32,6 +32,14 @@ function ScanPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const navTimerRef = useRef(null);
+
+  // Clear any pending navigation timer if the component unmounts before it fires.
+  useEffect(() => {
+    return () => {
+      if (navTimerRef.current) clearTimeout(navTimerRef.current);
+    };
+  }, []);
 
   const handleScan = async (e) => {
     e.preventDefault();
@@ -47,7 +55,7 @@ function ScanPage() {
     try {
       const response = await startScan(imageName.trim());
       setSuccess(`Scan initiated! Scan ID: ${response.data.scan_id}`);
-      setTimeout(() => {
+      navTimerRef.current = setTimeout(() => {
         navigate(`/scan/${response.data.scan_id}`);
       }, 1500);
     } catch (err) {
@@ -123,9 +131,8 @@ function ScanPage() {
         </Typography>
         <List>
           {exampleImages.map((image) => (
-            <ListItem
+            <ListItemButton
               key={image}
-              button
               onClick={() => handleExampleClick(image)}
               sx={{
                 '&:hover': { backgroundColor: 'action.hover' },
@@ -139,7 +146,7 @@ function ScanPage() {
                 primary={image}
                 secondary="Click to select"
               />
-            </ListItem>
+            </ListItemButton>
           ))}
         </List>
       </Paper>

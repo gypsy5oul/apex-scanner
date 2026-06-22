@@ -26,6 +26,21 @@ import PageHeader from '../components/PageHeader';
 import SearchIcon from '@mui/icons-material/Search';
 import { searchVulnerabilities } from '../api';
 import SeverityChip from '../components/SeverityChip';
+import { useTableSort, SortableHeadCell } from '../components/SortableTable';
+import { MONO_FONT, SEVERITY_ORDER } from '../theme/tokens';
+
+// Stable accessors for client-side sorting of search results.
+const SEARCH_ACCESSORS = {
+  cve_id: (v) => v.cve_id,
+  severity: (v) => {
+    const i = SEVERITY_ORDER.indexOf(String(v.severity || '').toLowerCase());
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  },
+  package_name: (v) => v.package_name,
+  package_version: (v) => v.package_version,
+  image_name: (v) => v.image_name,
+  fix_available: (v) => (v.fix_available ? 1 : 0),
+};
 
 function Search() {
   const navigate = useNavigate();
@@ -38,6 +53,8 @@ function Search() {
   const [error, setError] = useState(null);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
+
+  const resultsSort = useTableSort(results?.results || [], SEARCH_ACCESSORS, { key: 'severity', dir: 'asc' });
 
   const handleSearch = async (e) => {
     e.preventDefault();
@@ -77,7 +94,7 @@ function Search() {
     setPage(0);
   };
 
-  const paginatedResults = results?.results?.slice(
+  const paginatedResults = resultsSort.sorted.slice(
     page * rowsPerPage,
     page * rowsPerPage + rowsPerPage
   );
@@ -127,8 +144,10 @@ function Search() {
             </Grid>
             <Grid item xs={12} md={3}>
               <FormControl fullWidth>
-                <InputLabel>Severity</InputLabel>
+                <InputLabel id="search-severity-label">Severity</InputLabel>
                 <Select
+                  labelId="search-severity-label"
+                  id="search-severity"
                   value={severity}
                   label="Severity"
                   onChange={(e) => setSeverity(e.target.value)}
@@ -174,6 +193,9 @@ function Search() {
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Found {results.total} vulnerabilities
+            {results.results && results.total > results.results.length && (
+              <> (showing first {results.results.length})</>
+            )}
           </Typography>
 
           {results.results && results.results.length > 0 ? (
@@ -182,12 +204,24 @@ function Search() {
                 <Table size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell>CVE ID</TableCell>
-                      <TableCell>Severity</TableCell>
-                      <TableCell>Package</TableCell>
-                      <TableCell>Version</TableCell>
-                      <TableCell>Image</TableCell>
-                      <TableCell>Fix</TableCell>
+                      {[
+                        ['cve_id', 'CVE ID'],
+                        ['severity', 'Severity'],
+                        ['package_name', 'Package'],
+                        ['package_version', 'Version'],
+                        ['image_name', 'Image'],
+                        ['fix_available', 'Fix'],
+                      ].map(([key, label]) => (
+                        <SortableHeadCell
+                          key={key}
+                          columnKey={key}
+                          orderBy={resultsSort.orderBy}
+                          order={resultsSort.order}
+                          onSort={resultsSort.handleSort}
+                        >
+                          {label}
+                        </SortableHeadCell>
+                      ))}
                       <TableCell>Found By</TableCell>
                       <TableCell>Actions</TableCell>
                     </TableRow>
@@ -196,22 +230,24 @@ function Search() {
                     {paginatedResults.map((vuln, idx) => (
                       <TableRow key={`${vuln.scan_id}-${vuln.cve_id}-${idx}`} hover>
                         <TableCell>
-                          <Typography variant="body2" fontWeight="bold">
+                          <Typography variant="body2" sx={{ fontFamily: MONO_FONT, fontWeight: 700 }}>
                             {vuln.cve_id}
                           </Typography>
                         </TableCell>
                         <TableCell>
                           <SeverityChip severity={vuln.severity} />
                         </TableCell>
-                        <TableCell>{vuln.package_name}</TableCell>
-                        <TableCell>{vuln.package_version}</TableCell>
+                        <TableCell sx={{ fontFamily: MONO_FONT }}>{vuln.package_name}</TableCell>
+                        <TableCell sx={{ fontFamily: MONO_FONT }}>{vuln.package_version}</TableCell>
                         <TableCell>
                           <Typography
                             variant="body2"
+                            title={vuln.image_name}
                             sx={{
                               maxWidth: 150,
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
                             }}
                           >
                             {vuln.image_name}

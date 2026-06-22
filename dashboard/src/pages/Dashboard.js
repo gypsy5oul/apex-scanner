@@ -25,10 +25,13 @@ import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ErrorIcon from '@mui/icons-material/Error';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import { getStats, getRecentScans } from '../api';
 import { PageHeaderSkeleton, StatCardsSkeleton, CardGridSkeleton } from '../components/LoadingSkeletons';
 import { Reveal, CountUp } from '../components/Motion';
 import PageHeader from '../components/PageHeader';
+import { MONO_FONT } from '../theme/tokens';
 
 function StatCard({ title, value, subtitle, icon, color }) {
   return (
@@ -131,6 +134,7 @@ function SeverityBar({ critical, high, medium, low }) {
 
 function Dashboard() {
   const navigate = useNavigate();
+  const theme = useTheme();
   const [stats, setStats] = useState(null);
   const [recentScans, setRecentScans] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -210,7 +214,7 @@ function Dashboard() {
               value={stats?.total_images_scanned || 0}
               subtitle="Distinct images, all time"
               icon={<InventoryIcon />}
-              color="#2196f3"
+              color={theme.palette.primary.main}
             />
           </Reveal>
         </Grid>
@@ -221,7 +225,7 @@ function Dashboard() {
               value={stats?.total_scans || 0}
               subtitle="Scan runs"
               icon={<SecurityIcon />}
-              color="#4caf50"
+              color={theme.palette.success.main}
             />
           </Reveal>
         </Grid>
@@ -232,7 +236,7 @@ function Dashboard() {
               value={totalVulns}
               subtitle="Recent scans"
               icon={<ErrorIcon />}
-              color="#f44336"
+              color={theme.palette.severity.critical}
             />
           </Reveal>
         </Grid>
@@ -243,7 +247,7 @@ function Dashboard() {
               value={`${stats?.configuration?.scan_timeout || 300}s`}
               subtitle="Max duration"
               icon={<ScheduleIcon />}
-              color="#9c27b0"
+              color={theme.palette.secondary.main}
             />
           </Reveal>
         </Grid>
@@ -297,7 +301,7 @@ function Dashboard() {
                     >
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
                         <Box>
-                          <Typography variant="subtitle2" fontWeight={600} sx={{ fontFamily: 'monospace' }}>
+                          <Typography variant="subtitle2" fontWeight={600} sx={{ fontFamily: MONO_FONT }}>
                             {scan.image_name}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
@@ -307,6 +311,15 @@ function Dashboard() {
                         <Chip
                           label={scan.status}
                           size="small"
+                          icon={
+                            scan.status === 'completed' ? (
+                              <CheckCircleIcon />
+                            ) : scan.status === 'failed' ? (
+                              <ErrorIcon />
+                            ) : (
+                              <HourglassEmptyIcon />
+                            )
+                          }
                           color={scan.status === 'completed' ? 'success' : scan.status === 'failed' ? 'error' : 'warning'}
                         />
                       </Box>

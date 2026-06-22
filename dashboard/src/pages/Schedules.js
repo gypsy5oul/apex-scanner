@@ -21,20 +21,19 @@ import {
   TextField,
   Switch,
   FormControlLabel,
-  Alert,
   CircularProgress,
   Tooltip,
   Grid,
 } from '@mui/material';
 import PageHeader from '../components/PageHeader';
+import { TableSkeleton } from '../components/LoadingSkeletons';
+import { useToast, useConfirm } from '../components/Feedback';
 import {
   Add,
   Delete,
-  Edit,
   PlayArrow,
   Schedule,
   Notifications,
-  Refresh,
 } from '@mui/icons-material';
 import {
   getSchedules,
@@ -44,13 +43,22 @@ import {
   testNotification,
 } from '../api';
 
+// Basic 5-field cron validation: minute hour day month weekday.
+const isValidCron = (cron) => {
+  if (!cron || !cron.trim()) return false;
+  return cron.trim().split(/\s+/).length === 5;
+};
+
 function Schedules() {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [schedules, setSchedules] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [testDialogOpen, setTestDialogOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [runningName, setRunningName] = useState(null);
   const [newSchedule, setNewSchedule] = useState({
     name: '',
     images: '',
@@ -67,7 +75,7 @@ function Schedules() {
       const res = await getSchedules();
       setSchedules(res.data.schedules || []);
     } catch (err) {
-      setError('Failed to fetch schedules');
+      toast('Failed to fetch schedules: ' + (err.response?.data?.detail || err.message), 'error');
     } finally {
       setLoading(false);
     }
@@ -78,13 +86,14 @@ function Schedules() {
   }, []);
 
   const handleCreate = async () => {
+    setCreating(true);
     try {
       const images = newSchedule.images.split('\n').filter((i) => i.trim());
       await createSchedule({
         ...newSchedule,
         images,
       });
-      setSuccess('Schedule created successfully');
+      toast('Schedule created successfully', 'success');
       setDialogOpen(false);
       setNewSchedule({
         name: '',
@@ -96,39 +105,66 @@ function Schedules() {
       });
       fetchSchedules();
     } catch (err) {
-      setError('Failed to create schedule');
+      toast('Create schedule failed: ' + (err.response?.data?.detail || err.message), 'error');
+    } finally {
+      setCreating(false);
     }
   };
 
   const handleDelete = async (name) => {
-    if (!window.confirm(`Delete schedule "${name}"?`)) return;
+    if (
+      !(await confirm({
+        title: 'Delete schedule?',
+        message: `Delete scheduled scan "${name}"? This cannot be undone.`,
+        confirmLabel: 'Delete',
+        destructive: true,
+      }))
+    )
+      return;
     try {
       await deleteSchedule(name);
-      setSuccess('Schedule deleted');
+      toast('Schedule deleted', 'success');
       fetchSchedules();
     } catch (err) {
-      setError('Failed to delete schedule');
+      toast('Delete schedule failed: ' + (err.response?.data?.detail || err.message), 'error');
     }
   };
 
   const handleRunNow = async (name) => {
+    if (
+      !(await confirm({
+        title: 'Run scan now?',
+        message: `This starts a real scan for "${name}" immediately.`,
+        confirmLabel: 'Run Now',
+      }))
+    )
+      return;
+    setRunningName(name);
     try {
       await runScheduleNow(name);
-      setSuccess(`Triggered scan for "${name}"`);
+      toast(`Triggered scan for "${name}"`, 'success');
     } catch (err) {
-      setError('Failed to run schedule');
+      toast('Run schedule failed: ' + (err.response?.data?.detail || err.message), 'error');
+    } finally {
+      setRunningName(null);
     }
   };
 
   const handleTestWebhook = async () => {
+    setTesting(true);
     try {
       await testNotification(webhookTest);
-      setSuccess('Test notification sent successfully');
+      toast('Test notification sent successfully', 'success');
       setTestDialogOpen(false);
     } catch (err) {
-      setError('Failed to send test notification');
+      toast('Test notification failed: ' + (err.response?.data?.detail || err.message), 'error');
+    } finally {
+      setTesting(false);
     }
   };
+
+  const nameInvalid = !newSchedule.name.trim();
+  const cronInvalid = !isValidCron(newSchedule.cron_expression);
 
   const cronToHuman = (cron) => {
     const parts = cron.split(' ');
@@ -144,14 +180,6 @@ function Schedules() {
     }
     return cron;
   };
-
-  if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
-      </Box>
-    );
-  }
 
   return (
     <Box>
@@ -178,18 +206,11 @@ function Schedules() {
         }
       />
 
-      {error && (
-        <Alert severity="error" onClose={() => setError(null)} sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-      {success && (
-        <Alert severity="success" onClose={() => setSuccess(null)} sx={{ mb: 2 }}>
-          {success}
-        </Alert>
-      )}
-
-      {schedules.length === 0 ? (
+      {loading ? (
+        <Paper>
+          <TableSkeleton rows={5} cols={7} />
+        </Paper>
+      ) : schedules.length === 0 ? (
         <Card>
           <CardContent>
             <Box textAlign="center" py={4}>
@@ -197,7 +218,7 @@ function Schedules() {
               <Typography variant="h6" gutterBottom>
                 No Scheduled Scans
               </Typography>
-              <Typography color="textSecondary" mb={3}>
+              <Typography color="text.secondary" mb={3}>
                 Create your first scheduled scan to automate security checks
               </Typography>
               <Button
@@ -230,7 +251,7 @@ function Schedules() {
                   <TableCell>
                     <Typography fontWeight="medium">{schedule.name}</Typography>
                     {schedule.description && (
-                      <Typography variant="body2" color="textSecondary">
+                      <Typography variant="body2" color="text.secondary">
                         {schedule.description}
                       </Typography>
                     )}
@@ -250,7 +271,7 @@ function Schedules() {
                     <Typography variant="body2">
                       {cronToHuman(schedule.cron_expression)}
                     </Typography>
-                    <Typography variant="caption" color="textSecondary">
+                    <Typography variant="caption" color="text.secondary">
                       {schedule.cron_expression}
                     </Typography>
                   </TableCell>
@@ -264,7 +285,7 @@ function Schedules() {
                         variant="outlined"
                       />
                     ) : (
-                      <Typography variant="body2" color="textSecondary">
+                      <Typography variant="body2" color="text.secondary">
                         None
                       </Typography>
                     )}
@@ -282,23 +303,32 @@ function Schedules() {
                         {new Date(schedule.last_run).toLocaleString()}
                       </Typography>
                     ) : (
-                      <Typography variant="body2" color="textSecondary">
+                      <Typography variant="body2" color="text.secondary">
                         Never
                       </Typography>
                     )}
                   </TableCell>
                   <TableCell align="right">
                     <Tooltip title="Run Now">
-                      <IconButton
-                        color="primary"
-                        onClick={() => handleRunNow(schedule.name)}
-                      >
-                        <PlayArrow />
-                      </IconButton>
+                      <span>
+                        <IconButton
+                          color="primary"
+                          aria-label={`Run scan "${schedule.name}" now`}
+                          disabled={runningName === schedule.name}
+                          onClick={() => handleRunNow(schedule.name)}
+                        >
+                          {runningName === schedule.name ? (
+                            <CircularProgress size={20} />
+                          ) : (
+                            <PlayArrow />
+                          )}
+                        </IconButton>
+                      </span>
                     </Tooltip>
                     <Tooltip title="Delete">
                       <IconButton
                         color="error"
+                        aria-label={`Delete schedule "${schedule.name}"`}
                         onClick={() => handleDelete(schedule.name)}
                       >
                         <Delete />
@@ -320,21 +350,30 @@ function Schedules() {
             <Grid item xs={12} md={6}>
               <TextField
                 fullWidth
+                required
                 label="Schedule Name"
                 value={newSchedule.name}
                 onChange={(e) => setNewSchedule({ ...newSchedule, name: e.target.value })}
                 placeholder="daily-base-images"
+                error={nameInvalid}
+                helperText={nameInvalid ? 'Name is required' : ' '}
               />
             </Grid>
             <Grid item xs={12} md={6}>
               <TextField
                 fullWidth
+                required
                 label="Cron Expression"
                 value={newSchedule.cron_expression}
                 onChange={(e) =>
                   setNewSchedule({ ...newSchedule, cron_expression: e.target.value })
                 }
-                helperText="Format: minute hour day month weekday (e.g., 0 6 * * * for daily at 6 AM)"
+                error={cronInvalid}
+                helperText={
+                  cronInvalid
+                    ? 'Enter a valid 5-field cron (minute hour day month weekday)'
+                    : 'Format: minute hour day month weekday (e.g., 0 6 * * * for daily at 6 AM)'
+                }
               />
             </Grid>
             <Grid item xs={12}>
@@ -385,9 +424,16 @@ function Schedules() {
           </Grid>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreate}>
-            Create
+          <Button onClick={() => setDialogOpen(false)} disabled={creating}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleCreate}
+            disabled={creating || nameInvalid || cronInvalid}
+            startIcon={creating ? <CircularProgress size={20} /> : null}
+          >
+            {creating ? 'Creating…' : 'Create'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -406,9 +452,16 @@ function Schedules() {
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setTestDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleTestWebhook}>
-            Send Test
+          <Button onClick={() => setTestDialogOpen(false)} disabled={testing}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleTestWebhook}
+            disabled={testing || !webhookTest.trim()}
+            startIcon={testing ? <CircularProgress size={20} /> : null}
+          >
+            {testing ? 'Sending…' : 'Send Test'}
           </Button>
         </DialogActions>
       </Dialog>

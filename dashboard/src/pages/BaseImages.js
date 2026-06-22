@@ -7,13 +7,6 @@ import {
   CardActionArea,
   Typography,
   Button,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Paper,
   Chip,
   Dialog,
   DialogTitle,
@@ -27,7 +20,12 @@ import {
   IconButton,
   Tooltip,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import PageHeader from '../components/PageHeader';
+import { CardGridSkeleton } from '../components/LoadingSkeletons';
+import { useToast, useConfirm } from '../components/Feedback';
+import { severityAccent } from '../theme/tokens';
+import SeverityChip from '../components/SeverityChip';
 import {
   Add,
   Layers,
@@ -47,6 +45,9 @@ import {
 
 function BaseImages() {
   const navigate = useNavigate();
+  const theme = useTheme();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [baseImages, setBaseImages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -55,6 +56,9 @@ function BaseImages() {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [compareDialogOpen, setCompareDialogOpen] = useState(false);
   const [compareResult, setCompareResult] = useState(null);
+  const [registering, setRegistering] = useState(false);
+  const [comparing, setComparing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [newImage, setNewImage] = useState({
     image_name: '',
     image_tag: '',
@@ -89,18 +93,35 @@ function BaseImages() {
   }, []);
 
   const handleRegister = async () => {
+    if (!newImage.image_name.trim() || !newImage.image_tag.trim()) {
+      setError('Image name and tag are required');
+      return;
+    }
+    setRegistering(true);
     try {
       await registerBaseImage(newImage);
-      setSuccess('Base image registered successfully');
+      toast('Base image registered successfully', 'success');
       setDialogOpen(false);
       setNewImage({ image_name: '', image_tag: '', description: '' });
       fetchBaseImages();
     } catch (err) {
-      setError('Failed to register base image');
+      setError(err.response?.data?.detail || 'Failed to register base image');
+    } finally {
+      setRegistering(false);
     }
   };
 
   const handleCompare = async () => {
+    if (
+      !compareForm.image1.trim() ||
+      !compareForm.tag1.trim() ||
+      !compareForm.image2.trim() ||
+      !compareForm.tag2.trim()
+    ) {
+      setError('Both image names and tags are required to compare');
+      return;
+    }
+    setComparing(true);
     try {
       const res = await compareBaseImages(
         compareForm.image1,
@@ -110,14 +131,16 @@ function BaseImages() {
       );
       setCompareResult(res.data);
     } catch (err) {
-      setError('Failed to compare images');
+      setError(err.response?.data?.detail || 'Failed to compare images');
+    } finally {
+      setComparing(false);
     }
   };
 
   const handleScanAll = async () => {
     try {
       await scanAllBaseImages();
-      setSuccess('Scan triggered for all base images. Check the dashboard for progress.');
+      toast('Scan triggered for all base images. Check the dashboard for progress.', 'success');
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to trigger base image scan');
     }
@@ -125,13 +148,18 @@ function BaseImages() {
 
   const handleDelete = async (imageName, imageTag, e) => {
     e.stopPropagation();
-    if (!window.confirm(`Delete base image "${imageName}:${imageTag}"?`)) return;
+    if (!(await confirm({
+      title: 'Delete base image?',
+      message: `Remove "${imageName}:${imageTag}" from tracking? Its scan history will no longer be shown.`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    }))) return;
     try {
       await deleteBaseImage(imageName, imageTag);
-      setSuccess('Base image removed from tracking');
+      toast('Base image removed from tracking', 'success');
       fetchBaseImages();
     } catch (err) {
-      setError('Failed to delete base image');
+      setError(err.response?.data?.detail || 'Failed to delete base image');
     }
   };
 
@@ -146,15 +174,18 @@ function BaseImages() {
   };
 
   const handleUpdate = async () => {
+    setSaving(true);
     try {
       await updateBaseImage(editImage.image_name, editImage.image_tag, {
         description: editImage.description,
       });
-      setSuccess('Base image updated successfully');
+      toast('Base image updated successfully', 'success');
       setEditDialogOpen(false);
       fetchBaseImages();
     } catch (err) {
-      setError('Failed to update base image');
+      setError(err.response?.data?.detail || 'Failed to update base image');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -166,8 +197,12 @@ function BaseImages() {
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
+      <Box>
+        <PageHeader
+          title="Base Image Tracking"
+          description="Track and compare vulnerabilities in base images"
+        />
+        <CardGridSkeleton count={6} height={280} cols={{ xs: 12, md: 6, lg: 4 }} />
       </Box>
     );
   }
@@ -241,34 +276,42 @@ function BaseImages() {
         </Card>
       ) : (
         <Grid container spacing={3}>
-          {baseImages.map((image, index) => (
-            <Grid item xs={12} md={6} lg={4} key={index}>
-              <Card sx={{ cursor: 'pointer', '&:hover': { boxShadow: 6 } }} onClick={() => handleCardClick(image)}>
+          {baseImages.map((image) => {
+            const mode = theme.palette.mode;
+            const sevColor = (sev) => ({ color: severityAccent(sev, mode) });
+            return (
+            <Grid item xs={12} md={6} lg={4} key={`${image.image_name}:${image.image_tag}`}>
+              <Card sx={{ position: 'relative', '&:hover': { boxShadow: 6 } }}>
+                {/* Icon actions sit outside the action area so they stay independently clickable */}
+                <Box sx={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}>
+                  <Tooltip title="Edit description">
+                    <IconButton
+                      size="small"
+                      color="primary"
+                      onClick={(e) => handleEditClick(image, e)}
+                    >
+                      <Edit fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Remove from tracking">
+                    <IconButton
+                      size="small"
+                      color="error"
+                      onClick={(e) => handleDelete(image.image_name, image.image_tag, e)}
+                    >
+                      <Delete fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+                <CardActionArea
+                  onClick={() => handleCardClick(image)}
+                  aria-label={`View details for ${image.full_name || `${image.image_name}:${image.image_tag}`}`}
+                >
                 <CardContent>
-                  <Box display="flex" justifyContent="space-between" alignItems="flex-start">
+                  <Box sx={{ pr: 8 }}>
                     <Typography variant="h6" fontWeight="bold" gutterBottom>
                       {image.full_name || `${image.image_name}:${image.image_tag}`}
                     </Typography>
-                    <Box>
-                      <Tooltip title="Edit description">
-                        <IconButton
-                          size="small"
-                          color="primary"
-                          onClick={(e) => handleEditClick(image, e)}
-                        >
-                          <Edit fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Remove from tracking">
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={(e) => handleDelete(image.image_name, image.image_tag, e)}
-                        >
-                          <Delete fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
                   </Box>
                   {image.description && (
                     <Typography variant="body2" color="textSecondary" mb={2}>
@@ -278,7 +321,7 @@ function BaseImages() {
                   <Divider sx={{ my: 2 }} />
 
                   {/* Fixable Vulnerabilities */}
-                  <Typography variant="caption" color="success.main" fontWeight="bold" display="block" mb={1}>
+                  <Typography variant="caption" sx={sevColor('low')} fontWeight="bold" display="block" mb={1}>
                     FIXABLE (patches available)
                   </Typography>
                   <Grid container spacing={1} mb={2}>
@@ -286,7 +329,7 @@ function BaseImages() {
                       <Typography variant="caption" color="textSecondary">
                         Critical
                       </Typography>
-                      <Typography variant="h6" color="error">
+                      <Typography variant="h6" sx={sevColor('critical')}>
                         {image.current_vulns?.fixable_critical || 0}
                       </Typography>
                     </Grid>
@@ -294,7 +337,7 @@ function BaseImages() {
                       <Typography variant="caption" color="textSecondary">
                         High
                       </Typography>
-                      <Typography variant="h6" color="warning.main">
+                      <Typography variant="h6" sx={sevColor('high')}>
                         {image.current_vulns?.fixable_high || 0}
                       </Typography>
                     </Grid>
@@ -302,7 +345,7 @@ function BaseImages() {
                       <Typography variant="caption" color="textSecondary">
                         Medium
                       </Typography>
-                      <Typography variant="h6">
+                      <Typography variant="h6" sx={sevColor('medium')}>
                         {image.current_vulns?.fixable_medium || 0}
                       </Typography>
                     </Grid>
@@ -310,7 +353,7 @@ function BaseImages() {
                       <Typography variant="caption" color="textSecondary">
                         Low
                       </Typography>
-                      <Typography variant="h6" color="success.main">
+                      <Typography variant="h6" sx={sevColor('low')}>
                         {image.current_vulns?.fixable_low || 0}
                       </Typography>
                     </Grid>
@@ -325,7 +368,7 @@ function BaseImages() {
                       <Typography variant="caption" color="textSecondary">
                         Critical
                       </Typography>
-                      <Typography variant="h6" color="error">
+                      <Typography variant="h6" sx={sevColor('critical')}>
                         {(image.current_vulns?.critical || 0) - (image.current_vulns?.fixable_critical || 0)}
                       </Typography>
                     </Grid>
@@ -333,7 +376,7 @@ function BaseImages() {
                       <Typography variant="caption" color="textSecondary">
                         High
                       </Typography>
-                      <Typography variant="h6" color="warning.main">
+                      <Typography variant="h6" sx={sevColor('high')}>
                         {(image.current_vulns?.high || 0) - (image.current_vulns?.fixable_high || 0)}
                       </Typography>
                     </Grid>
@@ -341,7 +384,7 @@ function BaseImages() {
                       <Typography variant="caption" color="textSecondary">
                         Medium
                       </Typography>
-                      <Typography variant="h6">
+                      <Typography variant="h6" sx={sevColor('medium')}>
                         {(image.current_vulns?.medium || 0) - (image.current_vulns?.fixable_medium || 0)}
                       </Typography>
                     </Grid>
@@ -349,7 +392,7 @@ function BaseImages() {
                       <Typography variant="caption" color="textSecondary">
                         Low
                       </Typography>
-                      <Typography variant="h6" color="success.main">
+                      <Typography variant="h6" sx={sevColor('low')}>
                         {(image.current_vulns?.low || 0) - (image.current_vulns?.fixable_low || 0)}
                       </Typography>
                     </Grid>
@@ -368,9 +411,11 @@ function BaseImages() {
                     )}
                   </Box>
                 </CardContent>
+                </CardActionArea>
               </Card>
             </Grid>
-          ))}
+            );
+          })}
         </Grid>
       )}
 
@@ -415,9 +460,14 @@ function BaseImages() {
           </Grid>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleRegister}>
-            Register
+          <Button onClick={() => setDialogOpen(false)} disabled={registering}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleRegister}
+            disabled={registering}
+            startIcon={registering ? <CircularProgress size={18} color="inherit" /> : null}
+          >
+            {registering ? 'Registering…' : 'Register'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -494,18 +544,9 @@ function BaseImages() {
                       <Typography variant="subtitle2" color="textSecondary">
                         {compareResult.image1?.name}
                       </Typography>
-                      <Box mt={1}>
-                        <Chip
-                          label={`Critical: ${compareResult.image1?.vulnerabilities?.critical || 0}`}
-                          color="error"
-                          size="small"
-                          sx={{ mr: 1 }}
-                        />
-                        <Chip
-                          label={`High: ${compareResult.image1?.vulnerabilities?.high || 0}`}
-                          color="warning"
-                          size="small"
-                        />
+                      <Box mt={1} sx={{ display: 'flex', gap: 1 }}>
+                        <SeverityChip severity="critical" count={compareResult.image1?.vulnerabilities?.critical || 0} />
+                        <SeverityChip severity="high" count={compareResult.image1?.vulnerabilities?.high || 0} />
                       </Box>
                     </CardContent>
                   </Card>
@@ -516,18 +557,9 @@ function BaseImages() {
                       <Typography variant="subtitle2" color="textSecondary">
                         {compareResult.image2?.name}
                       </Typography>
-                      <Box mt={1}>
-                        <Chip
-                          label={`Critical: ${compareResult.image2?.vulnerabilities?.critical || 0}`}
-                          color="error"
-                          size="small"
-                          sx={{ mr: 1 }}
-                        />
-                        <Chip
-                          label={`High: ${compareResult.image2?.vulnerabilities?.high || 0}`}
-                          color="warning"
-                          size="small"
-                        />
+                      <Box mt={1} sx={{ display: 'flex', gap: 1 }}>
+                        <SeverityChip severity="critical" count={compareResult.image2?.vulnerabilities?.critical || 0} />
+                        <SeverityChip severity="high" count={compareResult.image2?.vulnerabilities?.high || 0} />
                       </Box>
                     </CardContent>
                   </Card>
@@ -538,8 +570,13 @@ function BaseImages() {
                   severity={compareResult.comparison.recommendation === 'image2' ? 'success' : 'info'}
                   sx={{ mt: 2 }}
                 >
-                  Recommendation: <strong>{compareResult.comparison.recommendation}</strong> has
-                  fewer critical/high vulnerabilities
+                  Recommendation:{' '}
+                  <strong>
+                    {compareResult.comparison.recommendation === 'image2'
+                      ? (compareResult.image2?.name || 'Image 2')
+                      : (compareResult.image1?.name || 'Image 1')}
+                  </strong>{' '}
+                  has fewer critical/high vulnerabilities
                 </Alert>
               )}
             </Box>
@@ -554,8 +591,13 @@ function BaseImages() {
           >
             Close
           </Button>
-          <Button variant="contained" onClick={handleCompare}>
-            Compare
+          <Button
+            variant="contained"
+            onClick={handleCompare}
+            disabled={comparing}
+            startIcon={comparing ? <CircularProgress size={18} color="inherit" /> : null}
+          >
+            {comparing ? 'Comparing…' : 'Compare'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -583,9 +625,14 @@ function BaseImages() {
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleUpdate}>
-            Save Changes
+          <Button onClick={() => setEditDialogOpen(false)} disabled={saving}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleUpdate}
+            disabled={saving}
+            startIcon={saving ? <CircularProgress size={18} color="inherit" /> : null}
+          >
+            {saving ? 'Saving…' : 'Save Changes'}
           </Button>
         </DialogActions>
       </Dialog>

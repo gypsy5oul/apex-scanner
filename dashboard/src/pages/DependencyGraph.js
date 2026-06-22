@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Paper,
@@ -21,14 +21,12 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Tooltip,
   Divider,
-  IconButton,
 } from '@mui/material';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import SearchIcon from '@mui/icons-material/Search';
 import { useTheme } from '@mui/material/styles';
-import { getSeverity, severityAccent } from '../theme/tokens';
+import { getSeverity, severityAccent, MONO_FONT } from '../theme/tokens';
 import SeverityChip from '../components/SeverityChip';
 import PageHeader from '../components/PageHeader';
 import { CountUp } from '../components/Motion';
@@ -86,10 +84,10 @@ function PackageNode({ node, selected, onClick }) {
         minWidth: 180,
       }}
     >
-      <Typography variant="body2" fontWeight={600} noWrap sx={{ fontFamily: theme.custom?.monoFont }}>
+      <Typography variant="body2" fontWeight={600} noWrap sx={{ fontFamily: MONO_FONT }}>
         {node.name}
       </Typography>
-      <Typography variant="caption" color="text.secondary" sx={{ fontFamily: theme.custom?.monoFont }}>
+      <Typography variant="caption" color="text.secondary" sx={{ fontFamily: MONO_FONT }}>
         {node.version}
       </Typography>
       {node.vuln_count > 0 && (
@@ -188,8 +186,8 @@ function DependencyGraph() {
   return (
     <Box>
       <PageHeader
-        title="Dependency Graph"
-        description="Visualize package dependencies and vulnerability hotspots"
+        title="Package Inventory & Impact"
+        description="Filterable package inventory with per-package vulnerability and dependency impact analysis"
       />
 
       {/* Scan ID Input */}
@@ -200,7 +198,7 @@ function DependencyGraph() {
             placeholder="Enter a scan ID..."
             value={scanId}
             onChange={(e) => setScanId(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && loadGraph()}
+            onKeyDown={(e) => e.key === 'Enter' && loadGraph()}
             fullWidth
             size="small"
           />
@@ -210,12 +208,24 @@ function DependencyGraph() {
             disabled={loading || !scanId.trim()}
             startIcon={loading ? <CircularProgress size={20} /> : <AccountTreeIcon />}
           >
-            Load Graph
+            Load Inventory
           </Button>
         </Box>
       </Paper>
 
       {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
+
+      {!graphData && !loading && !error && (
+        <Paper sx={{ p: 6, textAlign: 'center' }}>
+          <AccountTreeIcon sx={{ fontSize: 56, color: 'text.disabled', mb: 2 }} />
+          <Typography variant="h6" gutterBottom>
+            Enter a scan ID to visualize its dependency graph
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Load a scan to browse its package inventory, filter by severity, and inspect per-package impact.
+          </Typography>
+        </Paper>
+      )}
 
       {stats && (
         <Grid container spacing={2} sx={{ mb: 3 }}>
@@ -344,13 +354,13 @@ function DependencyGraph() {
                       <TableBody>
                         {selectedNode.vulnerabilities.map((v, i) => (
                           <TableRow key={i}>
-                            <TableCell sx={{ fontFamily: theme.custom?.monoFont, fontSize: '0.75rem' }}>
+                            <TableCell sx={{ fontFamily: MONO_FONT, fontSize: '0.75rem' }}>
                               {v.id || v.cve_id || 'N/A'}
                             </TableCell>
                             <TableCell>
                               <SeverityChip severity={v.severity} />
                             </TableCell>
-                            <TableCell sx={{ fontSize: '0.75rem', fontFamily: theme.custom?.monoFont }}>
+                            <TableCell sx={{ fontSize: '0.75rem', fontFamily: MONO_FONT }}>
                               {v.fix_version || v.fixedInVersion || '-'}
                             </TableCell>
                           </TableRow>
@@ -382,7 +392,7 @@ function DependencyGraph() {
                       <Box sx={{ mt: 1 }}>
                         <Typography variant="caption" fontWeight={600}>Vulnerable Paths:</Typography>
                         {impact.vulnerable_paths.slice(0, 5).map((path, i) => (
-                          <Typography key={i} variant="caption" display="block" sx={{ ml: 1, fontFamily: 'monospace' }}>
+                          <Typography key={i} variant="caption" display="block" sx={{ ml: 1, fontFamily: MONO_FONT }}>
                             {Array.isArray(path) ? path.join(' -> ') : path}
                           </Typography>
                         ))}

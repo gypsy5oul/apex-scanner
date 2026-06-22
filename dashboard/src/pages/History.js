@@ -14,6 +14,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   Chip,
   Card,
   CardContent,
@@ -29,6 +30,8 @@ import { VulnerabilityBar } from '../components/VulnerabilityChart';
 import { TableSkeleton } from '../components/LoadingSkeletons';
 import PageHeader from '../components/PageHeader';
 import { useTableSort, SortableHeadCell } from '../components/SortableTable';
+import { useToast } from '../components/Feedback';
+import { MONO_FONT } from '../theme/tokens';
 
 // Stable accessor maps (defined once so the sort memo doesn't thrash).
 const RECENT_ACCESSORS = {
@@ -53,15 +56,22 @@ const HISTORY_ACCESSORS = {
 
 function History() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [imageName, setImageName] = useState('');
   const [history, setHistory] = useState(null);
   const [recentScans, setRecentScans] = useState([]);
   const [loading, setLoading] = useState(false);
   const [recentLoading, setRecentLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [historyPage, setHistoryPage] = useState(0);
+  const [historyRowsPerPage, setHistoryRowsPerPage] = useState(10);
 
   const recentSort = useTableSort(recentScans, RECENT_ACCESSORS, { key: 'timestamp', dir: 'desc' });
   const historySort = useTableSort(history?.history || [], HISTORY_ACCESSORS, { key: 'scan_timestamp', dir: 'desc' });
+  const pagedHistory = historySort.sorted.slice(
+    historyPage * historyRowsPerPage,
+    historyPage * historyRowsPerPage + historyRowsPerPage
+  );
 
   // Fetch recent scans on component mount
   const fetchRecentScans = async () => {
@@ -70,7 +80,7 @@ function History() {
       const response = await getRecentScans(10);
       setRecentScans(response.data?.scans || []);
     } catch (err) {
-      console.error('Failed to fetch recent scans:', err);
+      toast('Failed to load recent scans: ' + (err.response?.data?.detail || err.message), 'error');
     } finally {
       setRecentLoading(false);
     }
@@ -93,6 +103,7 @@ function History() {
     try {
       const response = await getImageHistory(imageName.trim());
       setHistory(response.data);
+      setHistoryPage(0);
     } catch (err) {
       setError(err.response?.data?.detail || err.message);
       setHistory(null);
@@ -199,7 +210,7 @@ function History() {
                         <Typography
                           variant="body2"
                           sx={{
-                            fontFamily: 'monospace',
+                            fontFamily: MONO_FONT,
                             maxWidth: 300,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
@@ -332,7 +343,10 @@ function History() {
           {/* History Table */}
           <Paper sx={{ p: 3 }}>
             <Typography variant="h6" gutterBottom>
-              Scan History for: {history.image_name}
+              Scan History for:{' '}
+              <Box component="span" sx={{ fontFamily: MONO_FONT }}>
+                {history.image_name}
+              </Box>
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Total scans: {history.total_scans}
@@ -365,7 +379,7 @@ function History() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {historySort.sorted.map((scan) => (
+                  {pagedHistory.map((scan) => (
                     <TableRow key={scan.scan_id} hover>
                       <TableCell>
                         {scan.scan_timestamp
@@ -377,7 +391,11 @@ function History() {
                           size="small"
                           label={scan.status}
                           color={
-                            scan.status === 'completed' ? 'success' : 'warning'
+                            scan.status === 'completed'
+                              ? 'success'
+                              : scan.status === 'failed'
+                              ? 'error'
+                              : 'warning'
                           }
                         />
                       </TableCell>
@@ -393,7 +411,9 @@ function History() {
                       <TableCell>
                         <SeverityChip severity="Low" count={scan.low} />
                       </TableCell>
-                      <TableCell>{scan.total_packages}</TableCell>
+                      <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                        {scan.total_packages}
+                      </TableCell>
                       <TableCell>
                         <Button
                           size="small"
@@ -407,6 +427,18 @@ function History() {
                 </TableBody>
               </Table>
             </TableContainer>
+            <TablePagination
+              rowsPerPageOptions={[10, 25, 50, 100]}
+              component="div"
+              count={historySort.sorted.length}
+              rowsPerPage={historyRowsPerPage}
+              page={historyPage}
+              onPageChange={(e, newPage) => setHistoryPage(newPage)}
+              onRowsPerPageChange={(e) => {
+                setHistoryRowsPerPage(parseInt(e.target.value, 10));
+                setHistoryPage(0);
+              }}
+            />
           </Paper>
         </>
       )}

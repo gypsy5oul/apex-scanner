@@ -24,6 +24,7 @@ import {
 import PageHeader from '../components/PageHeader';
 import {
   Refresh,
+  Sync,
   Update,
   CheckCircle,
   Warning,
@@ -41,8 +42,11 @@ import {
   getUpdateHistory,
   getSystemNotifications,
 } from '../api';
+import { PageHeaderSkeleton, StatCardsSkeleton, CardGridSkeleton } from '../components/LoadingSkeletons';
+import { useToast } from '../components/Feedback';
 
 function SystemStatus() {
+  const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -69,6 +73,7 @@ function SystemStatus() {
       setNotifications(notifRes.data.notifications || []);
     } catch (err) {
       setError('Failed to fetch system status');
+      toast('Failed to fetch system status: ' + (err.response?.data?.detail || err.message), 'error');
     } finally {
       setLoading(false);
     }
@@ -78,23 +83,9 @@ function SystemStatus() {
     fetchData();
   }, []);
 
-  const handleUpdateDb = async () => {
-    setUpdating(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      await triggerDbUpdate();
-      setSuccess('Vulnerability database update started. This may take a few minutes.');
-      setTimeout(async () => {
-        await reloadData();
-        setUpdating(false);
-      }, 5000);
-    } catch (err) {
-      setError('Failed to trigger database update');
-      setUpdating(false);
-    }
-  };
-
+  // Re-fetch all panels without unmounting the page into a spinner.
+  // Returns the latest db "last fetched" markers so callers can detect a
+  // genuine update instead of claiming success on a timer.
   const reloadData = async () => {
     try {
       const [toolsRes, dbRes, historyRes, notifRes] = await Promise.all([
@@ -107,8 +98,48 @@ function SystemStatus() {
       setDbStatus(dbRes.data);
       setUpdateHistory(historyRes.data.history || []);
       setNotifications(notifRes.data.notifications || []);
+      return dbRes.data?.last_updates || null;
     } catch (err) {
       // silent reload, don't overwrite existing data
+      return null;
+    }
+  };
+
+  // Poll reloadData until the db "last fetched" markers change vs the snapshot
+  // taken when the action was triggered, or until we run out of attempts.
+  const pollUntilUpdated = async (before, { attempts = 6, intervalMs = 3000 } = {}) => {
+    const baseline = JSON.stringify(before || {});
+    for (let i = 0; i < attempts; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      // eslint-disable-next-line no-await-in-loop
+      const after = await reloadData();
+      if (after && JSON.stringify(after) !== baseline) return true;
+    }
+    return false;
+  };
+
+  const handleUpdateDb = async () => {
+    setUpdating(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const before = dbStatus?.last_updates || null;
+      await triggerDbUpdate();
+      setSuccess('Vulnerability database update triggered. This may take a few minutes.');
+      toast('Database update triggered', 'info');
+      const completed = await pollUntilUpdated(before);
+      if (completed) {
+        setSuccess('Vulnerability database updated.');
+        toast('Vulnerability database updated', 'success');
+      } else {
+        setSuccess('Update triggered. It is still running — refresh later to confirm.');
+      }
+    } catch (err) {
+      setError('Failed to trigger database update');
+      toast('Failed to trigger database update: ' + (err.response?.data?.detail || err.message), 'error');
+    } finally {
+      setUpdating(false);
     }
   };
 
@@ -117,25 +148,35 @@ function SystemStatus() {
     setError(null);
     setSuccess(null);
     try {
+      const before = dbStatus?.last_updates || null;
       await refreshSystemStatus();
-      setSuccess('Status refresh triggered. Reloading in a few seconds...');
-      // Wait for worker to update cache, then reload without full page spinner
-      setTimeout(async () => {
-        await reloadData();
-        setRefreshing(false);
-        setSuccess('Status refreshed successfully.');
+      setSuccess('Status refresh triggered.');
+      toast('Status refresh triggered', 'info');
+      // Only claim success once the data actually reflects the refresh.
+      const updated = await pollUntilUpdated(before);
+      if (updated) {
+        setSuccess('Status refreshed.');
+        toast('Status refreshed', 'success');
         setTimeout(() => setSuccess(null), 3000);
-      }, 5000);
+      } else {
+        setSuccess('Refresh triggered — data has not changed yet. Try again shortly.');
+      }
     } catch (err) {
       setError('Failed to refresh system status');
+      toast('Failed to refresh system status: ' + (err.response?.data?.detail || err.message), 'error');
+    } finally {
       setRefreshing(false);
     }
   };
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
+      <Box>
+        <PageHeaderSkeleton />
+        <StatCardsSkeleton count={3} />
+        <Box sx={{ mt: 3 }}>
+          <CardGridSkeleton count={2} height={220} cols={{ xs: 12, md: 6 }} />
+        </Box>
       </Box>
     );
   }
@@ -150,7 +191,7 @@ function SystemStatus() {
             <Button
               variant="outlined"
               startIcon={<Refresh />}
-              onClick={fetchData}
+              onClick={reloadData}
             >
               Refresh View
             </Button>
@@ -158,7 +199,7 @@ function SystemStatus() {
               <Button
                 variant="outlined"
                 color="secondary"
-                startIcon={refreshing ? <CircularProgress size={20} /> : <Refresh />}
+                startIcon={refreshing ? <CircularProgress size={20} /> : <Sync />}
                 onClick={handleRefreshStatus}
                 disabled={refreshing}
               >
@@ -226,7 +267,7 @@ function SystemStatus() {
                           )}
                         </Box>
                         <Box mt={2}>
-                          <Typography variant="body2" color="textSecondary">
+                          <Typography variant="body2" color="text.secondary">
                             Current Version
                           </Typography>
                           <Typography variant="h6" fontFamily="monospace">
@@ -235,7 +276,7 @@ function SystemStatus() {
                         </Box>
                         {info.update_available && (
                           <Box mt={1}>
-                            <Typography variant="body2" color="textSecondary">
+                            <Typography variant="body2" color="text.secondary">
                               Latest Version
                             </Typography>
                             <Typography variant="body1" fontFamily="monospace" color="warning.main">
@@ -243,7 +284,7 @@ function SystemStatus() {
                             </Typography>
                           </Box>
                         )}
-                        <Typography variant="caption" color="textSecondary" display="block" mt={1}>
+                        <Typography variant="caption" color="text.secondary" display="block" mt={1}>
                           Last checked: {info.last_checked ? new Date(info.last_checked).toLocaleString() : 'Never'}
                         </Typography>
                       </CardContent>
@@ -269,7 +310,7 @@ function SystemStatus() {
                 <Box>
                   <Grid container spacing={2}>
                     <Grid item xs={6}>
-                      <Typography variant="body2" color="textSecondary">
+                      <Typography variant="body2" color="text.secondary">
                         DB Build Date (vendor)
                       </Typography>
                       <Typography variant="body1">
@@ -277,12 +318,12 @@ function SystemStatus() {
                           ? new Date(dbStatus.grype.built).toLocaleString()
                           : 'Unknown'}
                       </Typography>
-                      <Typography variant="caption" color="textSecondary">
+                      <Typography variant="caption" color="text.secondary">
                         When Anchore published this DB, not when we fetched it
                       </Typography>
                     </Grid>
                     <Grid item xs={6}>
-                      <Typography variant="body2" color="textSecondary">
+                      <Typography variant="body2" color="text.secondary">
                         Last Fetched
                       </Typography>
                       <Typography variant="body1">
@@ -290,7 +331,7 @@ function SystemStatus() {
                           ? new Date(dbStatus.last_updates.grype).toLocaleString()
                           : 'Never'}
                       </Typography>
-                      <Typography variant="caption" color="textSecondary">
+                      <Typography variant="caption" color="text.secondary">
                         Schema {dbStatus.grype.schema_version || '—'}
                       </Typography>
                     </Grid>
@@ -298,7 +339,7 @@ function SystemStatus() {
                   <Divider sx={{ my: 2 }} />
                   <Box display="flex" justifyContent="space-between" alignItems="center">
                     <Box>
-                      <Typography variant="body2" color="textSecondary">
+                      <Typography variant="body2" color="text.secondary">
                         Hours Since Update
                       </Typography>
                       <Typography variant="h6">
@@ -321,7 +362,7 @@ function SystemStatus() {
                   </Box>
                 </Box>
               ) : (
-                <Typography color="textSecondary">No database information available</Typography>
+                <Typography color="text.secondary">No database information available</Typography>
               )}
             </CardContent>
           </Card>
@@ -358,7 +399,7 @@ function SystemStatus() {
                   </Table>
                 </TableContainer>
               ) : (
-                <Typography color="textSecondary">No update history available</Typography>
+                <Typography color="text.secondary">No update history available</Typography>
               )}
             </CardContent>
           </Card>
@@ -407,7 +448,7 @@ function SystemStatus() {
                   </Table>
                 </TableContainer>
               ) : (
-                <Typography color="textSecondary" textAlign="center" py={3}>
+                <Typography color="text.secondary" textAlign="center" py={3}>
                   No update history available
                 </Typography>
               )}
@@ -435,14 +476,14 @@ function SystemStatus() {
                           ? `Updates available for: ${notif.tools?.join(', ')}`
                           : notif.type}
                       </Typography>
-                      <Typography variant="caption" color="textSecondary">
+                      <Typography variant="caption" color="text.secondary">
                         {notif.timestamp ? new Date(notif.timestamp).toLocaleString() : ''}
                       </Typography>
                     </Alert>
                   ))}
                 </Box>
               ) : (
-                <Typography color="textSecondary" textAlign="center" py={3}>
+                <Typography color="text.secondary" textAlign="center" py={3}>
                   No notifications
                 </Typography>
               )}

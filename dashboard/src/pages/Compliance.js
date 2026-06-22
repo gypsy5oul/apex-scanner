@@ -29,7 +29,7 @@ import WarningIcon from '@mui/icons-material/Warning';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import AssessmentIcon from '@mui/icons-material/Assessment';
-import SearchIcon from '@mui/icons-material/Search';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { getComplianceFrameworks, getComplianceAssessment } from '../api';
 import PageHeader from '../components/PageHeader';
 import { CardGridSkeleton } from '../components/LoadingSkeletons';
@@ -112,7 +112,17 @@ function ControlItem({ control }) {
         <Box sx={{ px: 2, pb: 2 }}>
           <Divider sx={{ mb: 1 }} />
           {control.details && (
-            <Typography variant="body2" color="success.main" sx={{ mb: 1 }}>
+            <Typography
+              variant="body2"
+              color={
+                control.status === 'pass' || control.status === 'compliant'
+                  ? 'success.main'
+                  : control.status === 'fail' || control.status === 'non_compliant'
+                  ? 'error.main'
+                  : 'text.secondary'
+              }
+              sx={{ mb: 1 }}
+            >
               {control.details}
             </Typography>
           )}
@@ -136,9 +146,10 @@ function ControlItem({ control }) {
 
 function FrameworkCard({ framework, result, onExpand }) {
   const [expanded, setExpanded] = useState(false);
-  const passRate = result
-    ? Math.round((result.controls_passed / result.controls_total) * 100)
-    : 0;
+  const passRate =
+    result && result.controls_total > 0
+      ? Math.round((result.controls_passed / result.controls_total) * 100)
+      : 0;
 
   return (
     <Card
@@ -287,6 +298,18 @@ function Compliance() {
       <PageHeader
         title="Compliance Assessment"
         description="Evaluate container scans against security compliance frameworks"
+        actions={
+          <IconButton
+            onClick={() => {
+              loadFrameworks();
+              if (scanId.trim()) runAssessment();
+            }}
+            aria-label="Refresh"
+            sx={{ bgcolor: 'action.hover' }}
+          >
+            <RefreshIcon />
+          </IconButton>
+        }
       />
 
       {/* Scan ID Input */}
@@ -297,7 +320,7 @@ function Compliance() {
             placeholder="Enter a scan ID to evaluate..."
             value={scanId}
             onChange={(e) => setScanId(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && runAssessment()}
+            onKeyDown={(e) => e.key === 'Enter' && runAssessment()}
             fullWidth
             size="small"
           />

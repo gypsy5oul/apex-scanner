@@ -35,6 +35,8 @@ import {
   Divider,
 } from '@mui/material';
 import PageHeader from '../components/PageHeader';
+import { TableSkeleton } from '../components/LoadingSkeletons';
+import { useToast, useConfirm } from '../components/Feedback';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -73,15 +75,17 @@ const severityValues = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 
 function Policies() {
   const { isAuthenticated } = useAuth();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [policies, setPolicies] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
+  const [dialogError, setDialogError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [togglingId, setTogglingId] = useState(null);
 
   // Dialog states
   const [openDialog, setOpenDialog] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState(null);
-  const [deleteConfirm, setDeleteConfirm] = useState(null);
 
   // Form states
   const [formData, setFormData] = useState({
@@ -109,7 +113,7 @@ function Policies() {
       const response = await apiV2.get('/policies');
       setPolicies(response.data.policies || []);
     } catch (err) {
-      setError('Failed to load policies');
+      toast('Failed to load policies: ' + (err.response?.data?.detail || err.message), 'error');
     } finally {
       setLoading(false);
     }
@@ -117,6 +121,7 @@ function Policies() {
 
   const handleOpenCreate = () => {
     setEditingPolicy(null);
+    setDialogError(null);
     setFormData({
       name: '',
       description: '',
@@ -139,6 +144,7 @@ function Policies() {
     try {
       const response = await apiV2.get(`/policies/${policy.id}`);
       setEditingPolicy(response.data);
+      setDialogError(null);
       setFormData({
         name: response.data.name,
         description: response.data.description,
@@ -148,45 +154,68 @@ function Policies() {
       });
       setOpenDialog(true);
     } catch (err) {
-      setError('Failed to load policy details');
+      toast('Failed to load policy details: ' + (err.response?.data?.detail || err.message), 'error');
     }
   };
 
   const handleSave = async () => {
+    setSaving(true);
+    setDialogError(null);
     try {
       if (editingPolicy) {
         await apiV2.put(`/policies/${editingPolicy.id}`, formData);
-        setSuccess('Policy updated successfully');
+        toast('Policy updated successfully', 'success');
       } else {
         await apiV2.post('/policies', formData);
-        setSuccess('Policy created successfully');
+        toast('Policy created successfully', 'success');
       }
       setOpenDialog(false);
       fetchPolicies();
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to save policy');
+      setDialogError(err.response?.data?.detail || 'Failed to save policy');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleDelete = async (policyId) => {
+  const handleDelete = async (policy) => {
+    if (
+      !(await confirm({
+        title: 'Delete policy?',
+        message: `Delete "${policy.name}"? This action cannot be undone.`,
+        confirmLabel: 'Delete',
+        destructive: true,
+      }))
+    )
+      return;
     try {
-      await apiV2.delete(`/policies/${policyId}`);
-      setSuccess('Policy deleted successfully');
-      setDeleteConfirm(null);
+      await apiV2.delete(`/policies/${policy.id}`);
+      toast('Policy deleted successfully', 'success');
       fetchPolicies();
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to delete policy');
+      toast('Delete policy failed: ' + (err.response?.data?.detail || err.message), 'error');
     }
   };
 
+  // Send the FULL policy object with `enabled` flipped so a non-merge backend
+  // can't wipe the policy's other fields. Fetch the current policy first.
   const handleToggleEnabled = async (policy) => {
+    setTogglingId(policy.id);
     try {
+      const { data: full } = await apiV2.get(`/policies/${policy.id}`);
       await apiV2.put(`/policies/${policy.id}`, {
-        enabled: !policy.enabled,
+        name: full.name,
+        description: full.description,
+        enabled: !full.enabled,
+        fail_on_warn: full.fail_on_warn,
+        rules: full.rules || [],
       });
+      toast(`Policy ${!policy.enabled ? 'enabled' : 'disabled'}`, 'success');
       fetchPolicies();
     } catch (err) {
-      setError('Failed to update policy');
+      toast('Update policy failed: ' + (err.response?.data?.detail || err.message), 'error');
+    } finally {
+      setTogglingId(null);
     }
   };
 
@@ -221,7 +250,7 @@ function Policies() {
 
   const handleTest = async () => {
     if (!testPolicyId || !testScanId) {
-      setError('Please enter both Policy ID and Scan ID');
+      toast('Please enter both Policy ID and Scan ID', 'error');
       return;
     }
 
@@ -233,7 +262,7 @@ function Policies() {
       });
       setTestResult(response.data);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to evaluate policy');
+      toast('Evaluate policy failed: ' + (err.response?.data?.detail || err.message), 'error');
     } finally {
       setTestLoading(false);
     }
@@ -242,7 +271,7 @@ function Policies() {
   const copyPolicyJson = (policy) => {
     const json = JSON.stringify(policy, null, 2);
     navigator.clipboard.writeText(json);
-    setSuccess('Policy JSON copied to clipboard');
+    toast('Policy JSON copied to clipboard', 'success');
   };
 
   if (!isAuthenticated) {
@@ -261,18 +290,6 @@ function Policies() {
         title="Security Policies"
         description="Define CI/CD security gates that pass or fail scans on severity, EPSS and KEV"
       />
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-          {error}
-        </Alert>
-      )}
-
-      {success && (
-        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
-          {success}
-        </Alert>
-      )}
 
       {/* Actions */}
       <Box sx={{ mb: 3, display: 'flex', gap: 2 }}>
@@ -295,9 +312,7 @@ function Policies() {
       {/* Policies Table */}
       <Paper>
         {loading ? (
-          <Box sx={{ p: 4, textAlign: 'center' }}>
-            <CircularProgress />
-          </Box>
+          <TableSkeleton rows={5} cols={6} />
         ) : policies.length === 0 ? (
           <Box sx={{ p: 4, textAlign: 'center' }}>
             <Typography color="text.secondary">No policies defined</Typography>
@@ -344,25 +359,44 @@ function Policies() {
                       />
                     </TableCell>
                     <TableCell>
-                      <Chip
-                        label={policy.enabled ? 'Enabled' : 'Disabled'}
-                        color={policy.enabled ? 'success' : 'default'}
-                        size="small"
-                        onClick={() => handleToggleEnabled(policy)}
-                        sx={{ cursor: 'pointer' }}
+                      <FormControlLabel
+                        sx={{ m: 0 }}
+                        control={
+                          <Switch
+                            size="small"
+                            checked={!!policy.enabled}
+                            disabled={togglingId === policy.id}
+                            onChange={() => handleToggleEnabled(policy)}
+                            inputProps={{
+                              'aria-label': `${policy.enabled ? 'Disable' : 'Enable'} policy ${policy.name}`,
+                            }}
+                          />
+                        }
+                        label={
+                          <Typography variant="body2">
+                            {policy.enabled ? 'Enabled' : 'Disabled'}
+                          </Typography>
+                        }
                       />
                     </TableCell>
                     <TableCell>
                       {policy.fail_on_warn ? (
-                        <CheckCircleIcon color="warning" fontSize="small" />
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <CheckCircleIcon color="warning" fontSize="small" />
+                          <Typography variant="body2">Yes</Typography>
+                        </Box>
                       ) : (
-                        <CancelIcon color="disabled" fontSize="small" />
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <CancelIcon color="disabled" fontSize="small" />
+                          <Typography variant="body2" color="text.secondary">No</Typography>
+                        </Box>
                       )}
                     </TableCell>
                     <TableCell>
                       <Tooltip title="Edit">
                         <IconButton
                           size="small"
+                          aria-label={`Edit policy ${policy.name}`}
                           onClick={() => handleOpenEdit(policy)}
                         >
                           <EditIcon fontSize="small" />
@@ -371,6 +405,7 @@ function Policies() {
                       <Tooltip title="Copy JSON">
                         <IconButton
                           size="small"
+                          aria-label={`Copy JSON for policy ${policy.name}`}
                           onClick={() => copyPolicyJson(policy)}
                         >
                           <ContentCopyIcon fontSize="small" />
@@ -380,7 +415,8 @@ function Policies() {
                         <IconButton
                           size="small"
                           color="error"
-                          onClick={() => setDeleteConfirm(policy)}
+                          aria-label={`Delete policy ${policy.name}`}
+                          onClick={() => handleDelete(policy)}
                         >
                           <DeleteIcon fontSize="small" />
                         </IconButton>
@@ -415,7 +451,7 @@ function Policies() {
         >
           <pre style={{ margin: 0 }}>
 {`# Check scan against all enabled policies
-curl -X GET "http://your-server/api/v2/scan/{scan_id}/policy-check"
+curl -X GET "https://apexscanner.6dcorp.internal/api/v2/scan/{scan_id}/policy-check"
 
 # Response:
 {
@@ -448,15 +484,23 @@ fi`}
           {editingPolicy ? 'Edit Policy' : 'Create Policy'}
         </DialogTitle>
         <DialogContent>
+          {dialogError && (
+            <Alert severity="error" sx={{ mt: 1, mb: 1 }} onClose={() => setDialogError(null)}>
+              {dialogError}
+            </Alert>
+          )}
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12}>
               <TextField
                 fullWidth
+                required
                 label="Policy Name"
                 value={formData.name}
                 onChange={(e) =>
                   setFormData({ ...formData, name: e.target.value })
                 }
+                error={!formData.name.trim()}
+                helperText={!formData.name.trim() ? 'Policy name is required' : ' '}
               />
             </Grid>
             <Grid item xs={12}>
@@ -663,34 +707,14 @@ fi`}
           ))}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpenDialog(false)}>Cancel</Button>
+          <Button onClick={() => setOpenDialog(false)} disabled={saving}>Cancel</Button>
           <Button
             variant="contained"
             onClick={handleSave}
-            disabled={!formData.name || formData.rules.length === 0}
+            disabled={saving || !formData.name.trim() || formData.rules.length === 0}
+            startIcon={saving ? <CircularProgress size={20} /> : null}
           >
-            {editingPolicy ? 'Update' : 'Create'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={!!deleteConfirm} onClose={() => setDeleteConfirm(null)}>
-        <DialogTitle>Delete Policy</DialogTitle>
-        <DialogContent>
-          <Typography>
-            Are you sure you want to delete "{deleteConfirm?.name}"? This action
-            cannot be undone.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteConfirm(null)}>Cancel</Button>
-          <Button
-            variant="contained"
-            color="error"
-            onClick={() => handleDelete(deleteConfirm?.id)}
-          >
-            Delete
+            {saving ? 'Saving…' : editingPolicy ? 'Update' : 'Create'}
           </Button>
         </DialogActions>
       </Dialog>

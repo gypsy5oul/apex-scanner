@@ -15,13 +15,13 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Divider,
   alpha,
 } from '@mui/material';
 import PageHeader from '../components/PageHeader';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import AddCircleIcon from '@mui/icons-material/AddCircle';
 import RemoveCircleIcon from '@mui/icons-material/RemoveCircle';
+import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
 import { compareScans } from '../api';
 import SeverityChip from '../components/SeverityChip';
 
@@ -150,9 +150,10 @@ function Compare() {
             </Grid>
             <Grid item xs={12} md={4}>
               <Paper sx={{ p: 3, backgroundColor: (theme) => alpha(theme.palette.info.main, 0.12) }}>
-                <Typography variant="h6" sx={{ mb: 1 }}>
-                  Unchanged
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                  <RemoveCircleOutlineIcon color="info" />
+                  <Typography variant="h6">Unchanged</Typography>
+                </Box>
                 <Typography variant="h3">
                   {result.unchanged_vulnerabilities}
                 </Typography>
@@ -190,6 +191,14 @@ function Compare() {
             </Grid>
           </Paper>
 
+          {/* No differences */}
+          {result.new_vulnerabilities.length === 0 &&
+            result.fixed_vulnerabilities.length === 0 && (
+              <Alert severity="success" icon={<RemoveCircleOutlineIcon />} sx={{ mb: 3 }}>
+                No differences between these scans — no new or fixed vulnerabilities.
+              </Alert>
+            )}
+
           {/* New Vulnerabilities */}
           {result.new_vulnerabilities.length > 0 && (
             <Paper sx={{ p: 3, mb: 3 }}>
@@ -209,7 +218,7 @@ function Compare() {
                   </TableHead>
                   <TableBody>
                     {result.new_vulnerabilities.slice(0, 20).map((vuln, idx) => (
-                      <TableRow key={idx}>
+                      <TableRow key={`${vuln.id || vuln.cve || 'vuln'}:${vuln.package_name}:${idx}`}>
                         <TableCell>{vuln.id}</TableCell>
                         <TableCell>
                           <SeverityChip severity={vuln.severity} />
@@ -254,7 +263,7 @@ function Compare() {
                   </TableHead>
                   <TableBody>
                     {result.fixed_vulnerabilities.slice(0, 20).map((vuln, idx) => (
-                      <TableRow key={idx}>
+                      <TableRow key={`${vuln.id || vuln.cve || 'vuln'}:${vuln.package_name}:${idx}`}>
                         <TableCell>{vuln.id}</TableCell>
                         <TableCell>
                           <SeverityChip severity={vuln.severity} />

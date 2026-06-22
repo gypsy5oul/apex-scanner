@@ -26,8 +26,10 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
+  IconButton,
 } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import BuildIcon from '@mui/icons-material/Build';
@@ -43,7 +45,7 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import GavelIcon from '@mui/icons-material/Gavel';
 import { useTheme, alpha } from '@mui/material/styles';
 import { DataGrid } from '@mui/x-data-grid';
-import { getSeverity, severityAccent } from '../theme/tokens';
+import { getSeverity, severityAccent, MONO_FONT } from '../theme/tokens';
 import {
   getScanResult,
   getDependencyGraph,
@@ -59,9 +61,15 @@ import {
 import SeverityChip from '../components/SeverityChip';
 import { VulnerabilityDoughnut } from '../components/VulnerabilityChart';
 import AITriagePanel from '../components/AITriagePanel';
-import { PageHeaderSkeleton, CardGridSkeleton } from '../components/LoadingSkeletons';
+import { PageHeaderSkeleton, CardGridSkeleton, TableSkeleton } from '../components/LoadingSkeletons';
 import PageHeader from '../components/PageHeader';
+import { useToast } from '../components/Feedback';
 import { CountUp } from '../components/Motion';
+
+// Map an EPSS probability (0–1) to a severity token. Higher probability of
+// exploitation = higher severity hue (consistent with the rest of the app).
+const epssSeverity = (score) =>
+  score >= 0.5 ? 'critical' : score >= 0.1 ? 'high' : score > 0 ? 'medium' : 'low';
 
 // Rewrite report/SBOM URLs to the current API origin instead of whatever the
 // backend stored. Defaults to SAME-ORIGIN (the TLS edge proxy serves /reports
@@ -89,8 +97,10 @@ const fixReportUrl = (url) => {
   }
 };
 
-// Download a file by fetching it and creating a blob download link
-const downloadFile = async (url, filename) => {
+// Download a file by fetching it and creating a blob download link.
+// On failure we fall back to opening the file in a new tab and (if a toast
+// callback was supplied) surface the error to the user.
+const downloadFile = async (url, filename, onError) => {
   try {
     const response = await fetch(fixReportUrl(url));
     const blob = await response.blob();
@@ -103,7 +113,7 @@ const downloadFile = async (url, filename) => {
     document.body.removeChild(a);
     window.URL.revokeObjectURL(blobUrl);
   } catch (err) {
-    console.error('Download failed:', err);
+    if (onError) onError(err);
     // Fallback: open in new tab
     window.open(fixReportUrl(url), '_blank');
   }
@@ -124,10 +134,10 @@ const LICENSE_COLUMNS = [
       />
     ),
   },
-  { field: 'name', headerName: 'Package', flex: 1, minWidth: 160, renderCell: (p) => <strong>{p.value}</strong> },
-  { field: 'version', headerName: 'Version', width: 130, renderCell: (p) => <Box component="code">{p.value}</Box> },
+  { field: 'name', headerName: 'Package', flex: 1, minWidth: 160, renderCell: (p) => <Box sx={{ fontFamily: MONO_FONT, fontWeight: 700 }}>{p.value}</Box> },
+  { field: 'version', headerName: 'Version', width: 130, renderCell: (p) => <Box sx={{ fontFamily: MONO_FONT }}>{p.value}</Box> },
   { field: 'type', headerName: 'Type', width: 100 },
-  { field: 'category', headerName: 'Category', width: 160, renderCell: (p) => <Box component="code">{p.value}</Box> },
+  { field: 'category', headerName: 'Category', width: 160, renderCell: (p) => <Box sx={{ fontFamily: MONO_FONT }}>{p.value}</Box> },
   {
     field: 'licenses', headerName: 'License(s)', flex: 1, minWidth: 200, sortable: false,
     valueGetter: (p) => (p.row.licenses || []).join(', '),
@@ -167,7 +177,7 @@ function RiskGauge({ score = 0, level = 'low' }) {
         <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: '0.6rem' }}>
           Risk Score
         </Typography>
-        <Box sx={{ mt: 0.75, px: 1, py: '2px', borderRadius: 1, fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.06em', color: '#fff', bgcolor: t.solid }}>
+        <Box sx={{ mt: 0.75, px: 1, py: '2px', borderRadius: 1, fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.06em', color: t.onSolid, bgcolor: t.solid }}>
           {(level || 'unknown').toUpperCase()}
         </Box>
       </Box>
@@ -195,12 +205,14 @@ function AccentStat({ icon, value, label, color }) {
 
 function ScanResults() {
   const theme = useTheme();
+  const toast = useToast();
   const { scanId } = useParams();
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [polling, setPolling] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
+  const [exporting, setExporting] = useState({ csv: false, pdf: false });
 
   // New feature states
   const [dependencyGraph, setDependencyGraph] = useState(null);
@@ -225,7 +237,7 @@ function ScanResults() {
       const depRes = await getDependencyGraph(scanId);
       setDependencyGraph(depRes.data);
     } catch (err) {
-      console.error('Failed to fetch dependency graph:', err);
+      toast('Failed to load dependency graph: ' + (err.response?.data?.detail || err.message), 'error');
     } finally {
       setFeaturesLoading(prev => ({ ...prev, dependency: false }));
     }
@@ -240,7 +252,7 @@ function ScanResults() {
       setRemediation(remRes.data);
       setQuickWins(qwRes.data);
     } catch (err) {
-      console.error('Failed to fetch remediation:', err);
+      toast('Failed to load remediation plan: ' + (err.response?.data?.detail || err.message), 'error');
     } finally {
       setFeaturesLoading(prev => ({ ...prev, remediation: false }));
     }
@@ -251,7 +263,7 @@ function ScanResults() {
       const riskRes = await getRiskScore(scanId);
       setRiskScore(riskRes.data);
     } catch (err) {
-      console.error('Failed to fetch risk score:', err);
+      toast('Failed to load risk score: ' + (err.response?.data?.detail || err.message), 'error');
     } finally {
       setFeaturesLoading(prev => ({ ...prev, risk: false }));
     }
@@ -266,7 +278,7 @@ function ScanResults() {
       setEnrichedData(enrichedRes.data);
       setKevMatches(kevRes.data);
     } catch (err) {
-      console.error('Failed to fetch enrichment data:', err);
+      toast('Failed to load EPSS/KEV enrichment: ' + (err.response?.data?.detail || err.message), 'error');
     } finally {
       setFeaturesLoading(prev => ({ ...prev, enrichment: false }));
     }
@@ -277,9 +289,10 @@ function ScanResults() {
       const lcRes = await getLicenseCompliance(scanId);
       setLicenseCompliance(lcRes.data);
     } catch (err) {
-      // Silently absent for old scans — log to console only.
+      // 404 is expected for scans that pre-date the feature — stay silent and
+      // render the empty state. Surface any other failure to the user.
       if (err?.response?.status !== 404) {
-        console.error('Failed to fetch license compliance:', err);
+        toast('Failed to load license compliance: ' + (err.response?.data?.detail || err.message), 'error');
       }
     } finally {
       setFeaturesLoading(prev => ({ ...prev, licenses: false }));
@@ -287,6 +300,7 @@ function ScanResults() {
   };
 
   const handleExportCsv = async () => {
+    setExporting((s) => ({ ...s, csv: true }));
     try {
       const response = await exportCsv(scanId);
       const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -297,11 +311,14 @@ function ScanResults() {
       link.click();
       link.remove();
     } catch (err) {
-      console.error('Failed to export CSV:', err);
+      toast('CSV export failed: ' + (err.response?.data?.detail || err.message), 'error');
+    } finally {
+      setExporting((s) => ({ ...s, csv: false }));
     }
   };
 
   const handleExportPdf = async () => {
+    setExporting((s) => ({ ...s, pdf: true }));
     try {
       const response = await exportExecutivePdf(scanId, true);
       const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -312,7 +329,18 @@ function ScanResults() {
       link.click();
       link.remove();
     } catch (err) {
-      console.error('Failed to export PDF:', err);
+      toast('PDF export failed: ' + (err.response?.data?.detail || err.message), 'error');
+    } finally {
+      setExporting((s) => ({ ...s, pdf: false }));
+    }
+  };
+
+  const handleCopyScanId = async () => {
+    try {
+      await navigator.clipboard.writeText(result?.scan_id || scanId);
+      toast('Scan ID copied to clipboard', 'success');
+    } catch (err) {
+      toast('Copy failed: ' + (err.message || 'clipboard unavailable'), 'error');
     }
   };
 
@@ -440,10 +468,23 @@ function ScanResults() {
               <Typography>
                 <strong>Image:</strong> {result.image_name}
               </Typography>
-              <Typography>
-                <strong>Scan ID:</strong>{' '}
-                <code style={{ fontSize: '0.8em' }}>{result.scan_id}</code>
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                <Typography component="span">
+                  <strong>Scan ID:</strong>{' '}
+                  <Box component="span" sx={{ fontFamily: MONO_FONT, fontSize: '0.8em' }}>
+                    {result.scan_id}
+                  </Box>
+                </Typography>
+                <Tooltip title="Copy Scan ID">
+                  <IconButton
+                    size="small"
+                    aria-label="Copy scan ID to clipboard"
+                    onClick={handleCopyScanId}
+                  >
+                    <ContentCopyIcon fontSize="inherit" />
+                  </IconButton>
+                </Tooltip>
+              </Box>
               <Typography>
                 <strong>Status:</strong>{' '}
                 <Chip
@@ -628,7 +669,7 @@ function ScanResults() {
                   variant="contained"
                   startIcon={<DownloadIcon />}
                   color="primary"
-                  onClick={() => downloadFile(result.report_url, `${scanId}_vulnerability_report.html`)}
+                  onClick={() => downloadFile(result.report_url, `${scanId}_vulnerability_report.html`, (err) => toast('Report download failed, opening in a new tab: ' + (err.message || 'error'), 'warning'))}
                 >
                   Download Report
                 </Button>
@@ -646,7 +687,7 @@ function ScanResults() {
                     <Button
                       variant="outlined"
                       startIcon={<DownloadIcon />}
-                      onClick={() => downloadFile(result.sbom.html_report_url, `${scanId}_sbom_report.html`)}
+                      onClick={() => downloadFile(result.sbom.html_report_url, `${scanId}_sbom_report.html`, (err) => toast('SBOM report download failed, opening in a new tab: ' + (err.message || 'error'), 'warning'))}
                     >
                       Download SBOM Report
                     </Button>
@@ -665,7 +706,7 @@ function ScanResults() {
                         size="small"
                         variant="outlined"
                         startIcon={<DownloadIcon />}
-                        onClick={() => downloadFile(result.sbom.spdx_url, `${scanId}_spdx.json`)}
+                        onClick={() => downloadFile(result.sbom.spdx_url, `${scanId}_spdx.json`, (err) => toast('SPDX download failed, opening in a new tab: ' + (err.message || 'error'), 'warning'))}
                       >
                         SPDX
                       </Button>
@@ -675,7 +716,7 @@ function ScanResults() {
                         size="small"
                         variant="outlined"
                         startIcon={<DownloadIcon />}
-                        onClick={() => downloadFile(result.sbom.cyclonedx_url, `${scanId}_cyclonedx.json`)}
+                        onClick={() => downloadFile(result.sbom.cyclonedx_url, `${scanId}_cyclonedx.json`, (err) => toast('CycloneDX download failed, opening in a new tab: ' + (err.message || 'error'), 'warning'))}
                       >
                         CycloneDX
                       </Button>
@@ -685,7 +726,7 @@ function ScanResults() {
                         size="small"
                         variant="outlined"
                         startIcon={<DownloadIcon />}
-                        onClick={() => downloadFile(result.sbom.syft_url, `${scanId}_syft.json`)}
+                        onClick={() => downloadFile(result.sbom.syft_url, `${scanId}_syft.json`, (err) => toast('Syft download failed, opening in a new tab: ' + (err.message || 'error'), 'warning'))}
                       >
                         Syft
                       </Button>
@@ -697,17 +738,19 @@ function ScanResults() {
               <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mt: 2 }}>
                 <Button
                   variant="outlined"
-                  startIcon={<DownloadIcon />}
+                  startIcon={exporting.csv ? <CircularProgress size={18} color="inherit" /> : <DownloadIcon />}
                   onClick={handleExportCsv}
+                  disabled={exporting.csv}
                 >
-                  Export CSV
+                  {exporting.csv ? 'Exporting…' : 'Export CSV'}
                 </Button>
                 <Button
                   variant="outlined"
-                  startIcon={<DownloadIcon />}
+                  startIcon={exporting.pdf ? <CircularProgress size={18} color="inherit" /> : <DownloadIcon />}
                   onClick={handleExportPdf}
+                  disabled={exporting.pdf}
                 >
-                  Export PDF
+                  {exporting.pdf ? 'Exporting…' : 'Export PDF'}
                 </Button>
                 <Button
                   variant="outlined"
@@ -771,9 +814,7 @@ function ScanResults() {
                 {activeTab === 0 && (
                   <Box>
                     {featuresLoading.risk ? (
-                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-                        <CircularProgress />
-                      </Box>
+                      <CardGridSkeleton count={2} height={220} cols={{ xs: 12, md: 6 }} />
                     ) : riskScore ? (
                       <Grid container spacing={3}>
                         <Grid item xs={12} md={4}>
@@ -850,9 +891,7 @@ function ScanResults() {
                 {activeTab === 1 && (
                   <Box>
                     {featuresLoading.enrichment ? (
-                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-                        <CircularProgress />
-                      </Box>
+                      <TableSkeleton rows={8} cols={7} />
                     ) : (
                       <Grid container spacing={3}>
                         {/* Summary Cards */}
@@ -896,12 +935,12 @@ function ScanResults() {
                             <TableContainer component={Paper} variant="outlined">
                               <Table size="small">
                                 <TableHead>
-                                  <TableRow sx={{ bgcolor: 'error.dark' }}>
-                                    <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>CVE ID</TableCell>
-                                    <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Package</TableCell>
-                                    <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>EPSS Score</TableCell>
-                                    <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>KEV Details</TableCell>
-                                    <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Due Date</TableCell>
+                                  <TableRow sx={{ bgcolor: getSeverity('critical').solid }}>
+                                    {['CVE ID', 'Package', 'EPSS Score', 'KEV Details', 'Due Date'].map((h) => (
+                                      <TableCell key={h} sx={{ color: getSeverity('critical').onSolid, fontWeight: 'bold' }}>
+                                        {h}
+                                      </TableCell>
+                                    ))}
                                   </TableRow>
                                 </TableHead>
                                 <TableBody>
@@ -912,16 +951,16 @@ function ScanResults() {
                                           href={`https://nvd.nist.gov/vuln/detail/${vuln.id}`}
                                           target="_blank"
                                           rel="noopener"
-                                          sx={{ fontWeight: 'bold' }}
+                                          sx={{ fontWeight: 'bold', fontFamily: MONO_FONT }}
                                         >
                                           {vuln.id}
                                         </Link>
                                       </TableCell>
                                       <TableCell>
-                                        <Typography variant="body2" fontFamily="monospace">
+                                        <Typography variant="body2" sx={{ fontFamily: MONO_FONT }}>
                                           {vuln.package_name}
                                         </Typography>
-                                        <Typography variant="caption" color="text.secondary">
+                                        <Typography variant="caption" color="text.secondary" sx={{ fontFamily: MONO_FONT }}>
                                           {vuln.package_version}
                                         </Typography>
                                       </TableCell>
@@ -931,7 +970,12 @@ function ScanResults() {
                                             <Chip
                                               label={`${(vuln.epss_score * 100).toFixed(2)}%`}
                                               size="small"
-                                              color={vuln.epss_score >= 0.5 ? 'error' : vuln.epss_score >= 0.1 ? 'warning' : 'default'}
+                                              sx={{
+                                                bgcolor: getSeverity(epssSeverity(vuln.epss_score)).solid,
+                                                color: getSeverity(epssSeverity(vuln.epss_score)).onSolid,
+                                                fontWeight: 700,
+                                                fontVariantNumeric: 'tabular-nums',
+                                              }}
                                             />
                                           </Tooltip>
                                         ) : 'N/A'}
@@ -959,11 +1003,21 @@ function ScanResults() {
 
                         {/* High EPSS Score Vulnerabilities */}
                         <Grid item xs={12}>
+                          {(() => {
+                          const epssVulns = (enrichedData?.vulnerabilities || [])
+                            .filter(v => v.epss_score)
+                            .sort((a, b) => (b.epss_score || 0) - (a.epss_score || 0));
+                          const epssTop = epssVulns.slice(0, 15);
+                          return (
+                          <>
                           <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             <TrendingUpIcon /> Top Vulnerabilities by EPSS Score
                           </Typography>
                           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                             EPSS (Exploit Prediction Scoring System) predicts the probability of exploitation in the next 30 days
+                            {epssVulns.length > epssTop.length && (
+                              <> — showing top {epssTop.length} of {epssVulns.length}</>
+                            )}
                           </Typography>
                           <TableContainer component={Paper} variant="outlined">
                             <Table size="small">
@@ -979,17 +1033,14 @@ function ScanResults() {
                                 </TableRow>
                               </TableHead>
                               <TableBody>
-                                {enrichedData?.vulnerabilities
-                                  ?.filter(v => v.epss_score)
-                                  ?.sort((a, b) => (b.epss_score || 0) - (a.epss_score || 0))
-                                  ?.slice(0, 15)
-                                  ?.map((vuln, idx) => (
+                                {epssTop.map((vuln, idx) => (
                                     <TableRow key={idx}>
                                       <TableCell>
                                         <Link
                                           href={`https://nvd.nist.gov/vuln/detail/${vuln.id}`}
                                           target="_blank"
                                           rel="noopener"
+                                          sx={{ fontFamily: MONO_FONT }}
                                         >
                                           {vuln.id}
                                         </Link>
@@ -998,7 +1049,7 @@ function ScanResults() {
                                         )}
                                       </TableCell>
                                       <TableCell>
-                                        <Typography variant="body2" fontFamily="monospace" fontSize="0.75rem">
+                                        <Typography variant="body2" fontSize="0.75rem" sx={{ fontFamily: MONO_FONT }}>
                                           {vuln.package_name}
                                         </Typography>
                                       </TableCell>
@@ -1009,7 +1060,12 @@ function ScanResults() {
                                         <Chip
                                           label={`${(vuln.epss_score * 100).toFixed(2)}%`}
                                           size="small"
-                                          color={vuln.epss_score >= 0.5 ? 'error' : vuln.epss_score >= 0.1 ? 'warning' : 'default'}
+                                          sx={{
+                                            bgcolor: getSeverity(epssSeverity(vuln.epss_score)).solid,
+                                            color: getSeverity(epssSeverity(vuln.epss_score)).onSolid,
+                                            fontWeight: 700,
+                                            fontVariantNumeric: 'tabular-nums',
+                                          }}
                                         />
                                       </TableCell>
                                       <TableCell>
@@ -1018,19 +1074,14 @@ function ScanResults() {
                                           value={(vuln.epss_percentile || 0) * 100}
                                           sx={{ width: 60, mr: 1, display: 'inline-block', verticalAlign: 'middle' }}
                                         />
-                                        <Typography variant="caption">
+                                        <Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                                           {((vuln.epss_percentile || 0) * 100).toFixed(0)}%
                                         </Typography>
                                       </TableCell>
                                       <TableCell>
-                                        <Chip
-                                          label={vuln.risk_priority || 'unknown'}
-                                          size="small"
-                                          color={
-                                            vuln.risk_priority === 'critical' ? 'error' :
-                                            vuln.risk_priority === 'high' ? 'warning' :
-                                            vuln.risk_priority === 'medium' ? 'info' : 'default'
-                                          }
+                                        <SeverityChip
+                                          severity={RISK_SEVERITY[vuln.risk_priority] || 'unknown'}
+                                          variant="outlined"
                                         />
                                       </TableCell>
                                       <TableCell>
@@ -1045,11 +1096,14 @@ function ScanResults() {
                               </TableBody>
                             </Table>
                           </TableContainer>
-                          {(!enrichedData?.vulnerabilities || enrichedData.vulnerabilities.filter(v => v.epss_score).length === 0) && (
+                          {epssVulns.length === 0 && (
                             <Typography color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
                               No EPSS data available for this scan. Run a new scan to get enriched data.
                             </Typography>
                           )}
+                          </>
+                          );
+                          })()}
                         </Grid>
                       </Grid>
                     )}
@@ -1060,9 +1114,7 @@ function ScanResults() {
                 {activeTab === 2 && (
                   <Box>
                     {featuresLoading.remediation ? (
-                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-                        <CircularProgress />
-                      </Box>
+                      <TableSkeleton rows={8} cols={5} />
                     ) : (
                       <Grid container spacing={3}>
                         {/* Quick Wins */}
@@ -1088,12 +1140,12 @@ function ScanResults() {
                                   {quickWins.quick_wins.slice(0, 10).map((qw, idx) => (
                                     <TableRow key={idx}>
                                       <TableCell>
-                                        <Typography variant="body2" fontFamily="monospace">
+                                        <Typography variant="body2" sx={{ fontFamily: MONO_FONT }}>
                                           {qw.package || qw.package_name}
                                         </Typography>
                                       </TableCell>
                                       <TableCell>
-                                        <Typography variant="body2" fontFamily="monospace" fontSize="0.75rem">
+                                        <Typography variant="body2" fontSize="0.75rem" sx={{ fontFamily: MONO_FONT }}>
                                           {qw.current || qw.current_version}
                                         </Typography>
                                       </TableCell>
@@ -1104,9 +1156,22 @@ function ScanResults() {
                                         <Chip label={qw.vulns_fixed} size="small" color="warning" />
                                       </TableCell>
                                       <TableCell>
-                                        <Typography variant="body2" fontFamily="monospace" fontSize="0.7rem" color="text.secondary">
-                                          {qw.command}
-                                        </Typography>
+                                        <Tooltip title={qw.command || ''}>
+                                          <Typography
+                                            variant="body2"
+                                            fontSize="0.7rem"
+                                            color="text.secondary"
+                                            sx={{
+                                              fontFamily: MONO_FONT,
+                                              maxWidth: 280,
+                                              overflow: 'hidden',
+                                              textOverflow: 'ellipsis',
+                                              whiteSpace: 'nowrap',
+                                            }}
+                                          >
+                                            {qw.command}
+                                          </Typography>
+                                        </Tooltip>
                                       </TableCell>
                                     </TableRow>
                                   ))}
@@ -1152,11 +1217,11 @@ function ScanResults() {
                                         {actions.slice(0, 20).map((action, idx) => (
                                           <TableRow key={idx}>
                                             <TableCell>
-                                              <Typography variant="body2" fontFamily="monospace">
+                                              <Typography variant="body2" sx={{ fontFamily: MONO_FONT }}>
                                                 {action.package_name}
                                               </Typography>
                                             </TableCell>
-                                            <TableCell>{action.current_version}</TableCell>
+                                            <TableCell sx={{ fontFamily: MONO_FONT }}>{action.current_version}</TableCell>
                                             <TableCell>
                                               {action.fixed_version ? (
                                                 <Chip label={action.fixed_version} size="small" color="success" />
@@ -1166,7 +1231,7 @@ function ScanResults() {
                                             </TableCell>
                                             <TableCell>
                                               {action.vulnerabilities_fixed?.slice(0, 3).map((cve, i) => (
-                                                <Chip key={i} label={cve} size="small" sx={{ mr: 0.5, mb: 0.5 }} />
+                                                <Chip key={i} label={cve} size="small" sx={{ mr: 0.5, mb: 0.5, fontFamily: MONO_FONT }} />
                                               ))}
                                               {action.vulnerabilities_fixed?.length > 3 && (
                                                 <Chip label={`+${action.vulnerabilities_fixed.length - 3}`} size="small" />
@@ -1197,9 +1262,7 @@ function ScanResults() {
                 {activeTab === 3 && (
                   <Box>
                     {featuresLoading.dependency ? (
-                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-                        <CircularProgress />
-                      </Box>
+                      <TableSkeleton rows={8} cols={4} />
                     ) : dependencyGraph ? (
                       <Grid container spacing={3}>
                         <Grid item xs={12} md={4}>
@@ -1258,11 +1321,11 @@ function ScanResults() {
                                   {dependencyGraph.nodes?.filter(n => n.vuln_count > 0).slice(0, 15).map((pkg, idx) => (
                                     <TableRow key={idx}>
                                       <TableCell>
-                                        <Typography variant="body2" fontFamily="monospace">
+                                        <Typography variant="body2" sx={{ fontFamily: MONO_FONT }}>
                                           {pkg.name}
                                         </Typography>
                                       </TableCell>
-                                      <TableCell>{pkg.version}</TableCell>
+                                      <TableCell sx={{ fontFamily: MONO_FONT }}>{pkg.version}</TableCell>
                                       <TableCell>
                                         <Chip label={pkg.type} size="small" variant="outlined" />
                                       </TableCell>
@@ -1301,9 +1364,7 @@ function ScanResults() {
                 {activeTab === 5 && (
                   <Box>
                     {featuresLoading.licenses ? (
-                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-                        <CircularProgress />
-                      </Box>
+                      <TableSkeleton rows={8} cols={6} />
                     ) : licenseCompliance ? (
                       <>
                         {/* Status alert at the top */}

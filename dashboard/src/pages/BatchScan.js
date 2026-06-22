@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -10,6 +10,7 @@ import {
   CircularProgress,
   Chip,
   IconButton,
+  LinearProgress,
   alpha,
 } from '@mui/material';
 import PageHeader from '../components/PageHeader';
@@ -17,34 +18,53 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import { startBatchScan, getBatchStatus } from '../api';
+import SeverityChip from '../components/SeverityChip';
+import { useToast } from '../components/Feedback';
+import { MONO_FONT } from '../theme/tokens';
+
+// Stable per-row id so rows aren't keyed by array index (which breaks when
+// rows are added/removed mid-edit).
+let _rowSeq = 0;
+const newRow = () => ({ id: `img-${++_rowSeq}`, value: '' });
 
 function BatchScan() {
   const navigate = useNavigate();
-  const [images, setImages] = useState(['']);
+  const toast = useToast();
+  const [images, setImages] = useState([newRow()]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [batchResult, setBatchResult] = useState(null);
   const [polling, setPolling] = useState(false);
 
+  // Track mount + the pending poll timer so the recursive poll loop is
+  // cancelled when the component unmounts (no setState-after-unmount).
+  const isMountedRef = useRef(true);
+  const pollTimerRef = useRef(null);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    };
+  }, []);
+
   const handleAddImage = () => {
     if (images.length < 50) {
-      setImages([...images, '']);
+      setImages([...images, newRow()]);
     }
   };
 
-  const handleRemoveImage = (index) => {
-    setImages(images.filter((_, i) => i !== index));
+  const handleRemoveImage = (id) => {
+    setImages(images.filter((img) => img.id !== id));
   };
 
-  const handleImageChange = (index, value) => {
-    const newImages = [...images];
-    newImages[index] = value;
-    setImages(newImages);
+  const handleImageChange = (id, value) => {
+    setImages(images.map((img) => (img.id === id ? { ...img, value } : img)));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const validImages = images.filter((img) => img.trim());
+    const validImages = images.map((img) => img.value.trim()).filter(Boolean);
     if (validImages.length === 0) {
       setError('Please enter at least one image');
       return;
@@ -67,15 +87,18 @@ function BatchScan() {
   const pollBatchStatus = async (batchId) => {
     try {
       const response = await getBatchStatus(batchId);
+      if (!isMountedRef.current) return;
       setBatchResult(response.data);
       if (response.data.status === 'in_progress') {
-        setTimeout(() => pollBatchStatus(batchId), 5000);
+        pollTimerRef.current = setTimeout(() => pollBatchStatus(batchId), 5000);
       } else {
         setPolling(false);
         setLoading(false);
       }
     } catch (err) {
+      if (!isMountedRef.current) return;
       setError(err.message);
+      toast('Batch status update failed: ' + (err.response?.data?.detail || err.message), 'error');
       setPolling(false);
       setLoading(false);
     }
@@ -106,21 +129,21 @@ function BatchScan() {
         <form onSubmit={handleSubmit}>
           {images.map((image, index) => (
             <Box
-              key={index}
+              key={image.id}
               sx={{ display: 'flex', gap: 1, mb: 2, alignItems: 'center' }}
             >
               <TextField
                 fullWidth
                 label={`Image ${index + 1}`}
                 placeholder="e.g., nginx:latest"
-                value={image}
-                onChange={(e) => handleImageChange(index, e.target.value)}
+                value={image.value}
+                onChange={(e) => handleImageChange(image.id, e.target.value)}
                 disabled={loading}
                 size="small"
               />
               {images.length > 1 && (
                 <IconButton
-                  onClick={() => handleRemoveImage(index)}
+                  onClick={() => handleRemoveImage(image.id)}
                   disabled={loading}
                   color="error"
                   aria-label={`Remove image ${index + 1}`}
@@ -181,6 +204,16 @@ function BatchScan() {
               <strong>Progress:</strong> {batchResult.completed || 0} /{' '}
               {batchResult.total_images} completed
             </Typography>
+            {polling && batchResult.total_images > 0 && (
+              <LinearProgress
+                variant="determinate"
+                value={Math.min(
+                  ((batchResult.completed || 0) / batchResult.total_images) * 100,
+                  100
+                )}
+                sx={{ mt: 1, height: 8, borderRadius: 1 }}
+              />
+            )}
           </Box>
 
           {batchResult.scans && (
@@ -209,27 +242,33 @@ function BatchScan() {
                     borderRadius: 1,
                   }}
                 >
-                  <Box>
-                    <Typography variant="body2">
-                      <strong>{scan.image_name}</strong>
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontWeight: 700,
+                        maxWidth: 360,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={scan.image_name}
+                    >
+                      {scan.image_name}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ fontFamily: MONO_FONT }}
+                    >
                       {scan.scan_id}
                     </Typography>
                   </Box>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     {scan.status === 'completed' && (
                       <>
-                        <Chip
-                          size="small"
-                          label={`C:${scan.critical}`}
-                          color="error"
-                        />
-                        <Chip
-                          size="small"
-                          label={`H:${scan.high}`}
-                          color="warning"
-                        />
+                        <SeverityChip severity="Critical" count={scan.critical || 0} />
+                        <SeverityChip severity="High" count={scan.high || 0} />
                       </>
                     )}
                     <Button

@@ -28,8 +28,12 @@ import {
   ListItemText,
   ListItemIcon,
   Divider,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import PageHeader from '../components/PageHeader';
+import { TableSkeleton, StatCardsSkeleton } from '../components/LoadingSkeletons';
+import { useToast } from '../components/Feedback';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -57,6 +61,7 @@ import {
 const REFRESH_INTERVAL = 10000;
 
 function WorkerMonitor() {
+  const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [status, setStatus] = useState(null);
@@ -87,11 +92,11 @@ function WorkerMonitor() {
       setError(null);
     } catch (err) {
       setError('Failed to fetch worker status');
-      console.error(err);
+      toast('Failed to fetch worker status: ' + (err.response?.data?.detail || err.message), 'error');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     fetchData();
@@ -114,10 +119,10 @@ function WorkerMonitor() {
   const handlePingWorkers = async () => {
     try {
       const res = await pingWorkers();
-      alert(`Pinged ${res.data.total} workers. ${res.data.responsive} responded.`);
+      toast(`Pinged ${res.data.total} workers. ${res.data.responsive} responded.`, 'info');
       fetchData();
     } catch (err) {
-      alert('Failed to ping workers');
+      toast('Failed to ping workers: ' + (err.response?.data?.detail || err.message), 'error');
     }
   };
 
@@ -126,11 +131,12 @@ function WorkerMonitor() {
 
     try {
       await purgeQueue(selectedQueue);
+      toast(`Purged the ${selectedQueue} queue.`, 'success');
       setPurgeDialogOpen(false);
       setSelectedQueue(null);
       fetchData();
     } catch (err) {
-      alert('Failed to purge queue');
+      toast('Failed to purge queue: ' + (err.response?.data?.detail || err.message), 'error');
     }
   };
 
@@ -167,8 +173,15 @@ function WorkerMonitor() {
 
   if (loading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
-        <CircularProgress />
+      <Box>
+        <PageHeader
+          title="Worker Monitor"
+          description="Real-time monitoring of Celery workers and task queues"
+        />
+        <StatCardsSkeleton count={4} />
+        <Box sx={{ mt: 3 }}>
+          <TableSkeleton rows={6} cols={4} />
+        </Box>
       </Box>
     );
   }
@@ -180,11 +193,17 @@ function WorkerMonitor() {
         description="Real-time monitoring of Celery workers and task queues"
         actions={
           <>
-            <Chip
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={autoRefresh}
+                  onChange={(e) => setAutoRefresh(e.target.checked)}
+                  size="small"
+                  inputProps={{ 'aria-label': 'Toggle auto-refresh' }}
+                />
+              }
               label={autoRefresh ? 'Auto-refresh ON' : 'Auto-refresh OFF'}
-              color={autoRefresh ? 'success' : 'default'}
-              onClick={() => setAutoRefresh(!autoRefresh)}
-              size="small"
+              sx={{ mr: 1 }}
             />
             <Button
               variant="outlined"
@@ -239,7 +258,7 @@ function WorkerMonitor() {
                 <GroupWorkIcon color="primary" />
                 <Typography variant="h6">Workers</Typography>
               </Box>
-              <Typography variant="h3" color="primary">
+              <Typography variant="h3" color="primary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                 {status?.cluster?.active_workers || 0}
               </Typography>
               <Typography variant="body2" color="text.secondary">
@@ -256,7 +275,11 @@ function WorkerMonitor() {
                 <QueueIcon color="primary" />
                 <Typography variant="h6">Queued Tasks</Typography>
               </Box>
-              <Typography variant="h3" color={status?.cluster?.total_queued > 10 ? 'error.main' : 'primary'}>
+              <Typography
+                variant="h3"
+                color={status?.cluster?.total_queued > 10 ? 'error.main' : 'primary'}
+                sx={{ fontVariantNumeric: 'tabular-nums' }}
+              >
                 {status?.cluster?.total_queued || 0}
               </Typography>
               <Typography variant="body2" color="text.secondary">
@@ -273,7 +296,7 @@ function WorkerMonitor() {
                 <SpeedIcon color="primary" />
                 <Typography variant="h6">Processed</Typography>
               </Box>
-              <Typography variant="h3" color="success.main">
+              <Typography variant="h3" color="success.main" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                 {status?.cluster?.total_processed || 0}
               </Typography>
               <Typography variant="body2" color="text.secondary">
@@ -528,23 +551,23 @@ function WorkerMonitor() {
             <Grid container spacing={3}>
               <Grid item xs={6} md={2}>
                 <Typography variant="body2" color="text.secondary">Total Scans</Typography>
-                <Typography variant="h5">{status?.tasks?.total_scans || 0}</Typography>
+                <Typography variant="h5" sx={{ fontVariantNumeric: 'tabular-nums' }}>{status?.tasks?.total_scans || 0}</Typography>
               </Grid>
               <Grid item xs={6} md={2}>
                 <Typography variant="body2" color="text.secondary">Completed</Typography>
-                <Typography variant="h5" color="success.main">
+                <Typography variant="h5" color="success.main" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                   {status?.tasks?.completed_scans || 0}
                 </Typography>
               </Grid>
               <Grid item xs={6} md={2}>
                 <Typography variant="body2" color="text.secondary">In Progress</Typography>
-                <Typography variant="h5" color="info.main">
+                <Typography variant="h5" color="info.main" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                   {status?.tasks?.in_progress || 0}
                 </Typography>
               </Grid>
               <Grid item xs={6} md={2}>
                 <Typography variant="body2" color="text.secondary">Failed</Typography>
-                <Typography variant="h5" color="error.main">
+                <Typography variant="h5" color="error.main" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                   {status?.tasks?.failed_scans || 0}
                 </Typography>
               </Grid>

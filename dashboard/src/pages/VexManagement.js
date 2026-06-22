@@ -21,6 +21,7 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  FormHelperText,
   Alert,
   CircularProgress,
   Tooltip,
@@ -40,6 +41,10 @@ import {
   importVexDocument,
 } from '../api';
 import PageHeader from '../components/PageHeader';
+import { TableSkeleton } from '../components/LoadingSkeletons';
+import { useToast, useConfirm } from '../components/Feedback';
+
+const CVE_RE = /^CVE-\d{4}-\d+$/i;
 
 const STATUS_COLORS = {
   not_affected: 'success',
@@ -63,7 +68,7 @@ const JUSTIFICATIONS = [
   { value: 'inline_mitigations_already_exist', label: 'Inline Mitigations Exist' },
 ];
 
-function StatementDialog({ open, onClose, onSave, editData }) {
+function StatementDialog({ open, onClose, onSave, editData, saving }) {
   const [form, setForm] = useState({
     cve_id: '',
     product: '',
@@ -72,6 +77,7 @@ function StatementDialog({ open, onClose, onSave, editData }) {
     impact_statement: '',
     action_statement: '',
   });
+  const [touched, setTouched] = useState({});
 
   useEffect(() => {
     if (editData) {
@@ -93,9 +99,18 @@ function StatementDialog({ open, onClose, onSave, editData }) {
         action_statement: '',
       });
     }
+    setTouched({});
   }, [editData, open]);
 
+  const cveInvalid = !CVE_RE.test(form.cve_id.trim());
+  const productInvalid = !form.product.trim();
+  const justificationMissing =
+    form.status === 'not_affected' && !form.justification;
+  const canSubmit = !cveInvalid && !productInvalid && !justificationMissing;
+
   const handleSubmit = () => {
+    setTouched({ cve_id: true, product: true, justification: true });
+    if (!canSubmit) return;
     onSave(form, editData?.id);
   };
 
@@ -109,18 +124,32 @@ function StatementDialog({ open, onClose, onSave, editData }) {
             placeholder="CVE-2024-1234"
             value={form.cve_id}
             onChange={(e) => setForm({ ...form, cve_id: e.target.value })}
+            onBlur={() => setTouched((t) => ({ ...t, cve_id: true }))}
             disabled={!!editData}
             required
             size="small"
+            error={!editData && touched.cve_id && cveInvalid}
+            helperText={
+              !editData && touched.cve_id && cveInvalid
+                ? 'Format must be CVE-YYYY-NNNN (e.g. CVE-2024-1234)'
+                : ' '
+            }
           />
           <TextField
             label="Product"
             placeholder="e.g. myregistry/myimage:latest"
             value={form.product}
             onChange={(e) => setForm({ ...form, product: e.target.value })}
+            onBlur={() => setTouched((t) => ({ ...t, product: true }))}
             disabled={!!editData}
             required
             size="small"
+            error={!editData && touched.product && productInvalid}
+            helperText={
+              !editData && touched.product && productInvalid
+                ? 'Product is required'
+                : ' '
+            }
           />
           <FormControl size="small" required>
             <InputLabel>Status</InputLabel>
@@ -136,7 +165,7 @@ function StatementDialog({ open, onClose, onSave, editData }) {
             </Select>
           </FormControl>
           {form.status === 'not_affected' && (
-            <FormControl size="small">
+            <FormControl size="small" required error={justificationMissing}>
               <InputLabel>Justification</InputLabel>
               <Select
                 value={form.justification}
@@ -148,6 +177,11 @@ function StatementDialog({ open, onClose, onSave, editData }) {
                   <MenuItem key={j.value} value={j.value}>{j.label}</MenuItem>
                 ))}
               </Select>
+              <FormHelperText>
+                {justificationMissing
+                  ? 'Justification is required when status is "Not Affected"'
+                  : ' '}
+              </FormHelperText>
             </FormControl>
           )}
           <TextField
@@ -171,13 +205,14 @@ function StatementDialog({ open, onClose, onSave, editData }) {
         </Box>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
+        <Button onClick={onClose} disabled={saving}>Cancel</Button>
         <Button
           variant="contained"
           onClick={handleSubmit}
-          disabled={!form.cve_id || !form.product}
+          disabled={saving || !canSubmit}
+          startIcon={saving ? <CircularProgress size={20} /> : null}
         >
-          {editData ? 'Update' : 'Create'}
+          {saving ? 'Saving…' : editData ? 'Update' : 'Create'}
         </Button>
       </DialogActions>
     </Dialog>
@@ -185,17 +220,19 @@ function StatementDialog({ open, onClose, onSave, editData }) {
 }
 
 function VexManagement() {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [statements, setStatements] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editData, setEditData] = useState(null);
   const [filterCve, setFilterCve] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [activeTab, setActiveTab] = useState(0);
   const [importJson, setImportJson] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const loadStatements = useCallback(async () => {
     setLoading(true);
@@ -207,16 +244,17 @@ function VexManagement() {
       setStatements(response.data.statements || []);
       setTotal(response.data.total || 0);
     } catch (err) {
-      setError('Failed to load VEX statements');
+      toast('Failed to load VEX statements: ' + (err.response?.data?.detail || err.message), 'error');
     }
     setLoading(false);
-  }, [filterCve, filterStatus]);
+  }, [filterCve, filterStatus, toast]);
 
   useEffect(() => {
     loadStatements();
   }, [loadStatements]);
 
   const handleSave = async (form, editId) => {
+    setSaving(true);
     try {
       if (editId) {
         await updateVexStatement(editId, {
@@ -225,44 +263,57 @@ function VexManagement() {
           impact_statement: form.impact_statement,
           action_statement: form.action_statement,
         });
-        setSuccess('VEX statement updated');
+        toast('VEX statement updated', 'success');
       } else {
         await createVexStatement(form);
-        setSuccess('VEX statement created');
+        toast('VEX statement created', 'success');
       }
       setDialogOpen(false);
       setEditData(null);
       loadStatements();
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to save VEX statement');
+      toast('Save VEX statement failed: ' + (err.response?.data?.detail || err.message), 'error');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Delete this VEX statement?')) return;
+    if (
+      !(await confirm({
+        title: 'Delete VEX statement?',
+        message: 'This permanently removes the VEX statement.',
+        confirmLabel: 'Delete',
+        destructive: true,
+      }))
+    )
+      return;
     try {
       await deleteVexStatement(id);
-      setSuccess('VEX statement deleted');
+      toast('VEX statement deleted', 'success');
       loadStatements();
     } catch (err) {
-      setError('Failed to delete VEX statement');
+      toast('Delete VEX statement failed: ' + (err.response?.data?.detail || err.message), 'error');
     }
   };
 
   const handleImport = async () => {
+    setImporting(true);
     try {
       const doc = JSON.parse(importJson);
       const response = await importVexDocument(doc);
-      setSuccess(`Imported ${response.data.imported} of ${response.data.total} statements`);
+      toast(`Imported ${response.data.imported} of ${response.data.total} statements`, 'success');
       setImportJson('');
       setActiveTab(0);
       loadStatements();
     } catch (err) {
       if (err instanceof SyntaxError) {
-        setError('Invalid JSON format');
+        toast('Invalid JSON format', 'error');
       } else {
-        setError(err.response?.data?.detail || 'Import failed');
+        toast('Import failed: ' + (err.response?.data?.detail || err.message), 'error');
       }
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -290,9 +341,6 @@ function VexManagement() {
           </>
         }
       />
-
-      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
-      {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}
 
       <Paper sx={{ mb: 3 }}>
         <Tabs value={activeTab} onChange={(e, v) => setActiveTab(v)}>
@@ -329,7 +377,7 @@ function VexManagement() {
             </Box>
 
             {loading ? (
-              <Box sx={{ textAlign: 'center', py: 4 }}><CircularProgress /></Box>
+              <TableSkeleton rows={6} cols={6} />
             ) : statements.length === 0 ? (
               <Alert severity="info">No VEX statements found. Create one to get started.</Alert>
             ) : (
@@ -413,6 +461,7 @@ function VexManagement() {
               Paste an OpenVEX format JSON document to import statements.
             </Typography>
             <TextField
+              label="OpenVEX JSON"
               multiline
               rows={12}
               fullWidth
@@ -420,14 +469,15 @@ function VexManagement() {
               value={importJson}
               onChange={(e) => setImportJson(e.target.value)}
               sx={{ fontFamily: 'monospace', fontSize: '0.8rem', mb: 2 }}
+              InputLabelProps={{ shrink: true }}
             />
             <Button
               variant="contained"
-              startIcon={<UploadIcon />}
+              startIcon={importing ? <CircularProgress size={20} /> : <UploadIcon />}
               onClick={handleImport}
-              disabled={!importJson.trim()}
+              disabled={importing || !importJson.trim()}
             >
-              Import Document
+              {importing ? 'Importing…' : 'Import Document'}
             </Button>
           </Box>
         )}
@@ -438,6 +488,7 @@ function VexManagement() {
         onClose={() => { setDialogOpen(false); setEditData(null); }}
         onSave={handleSave}
         editData={editData}
+        saving={saving}
       />
     </Box>
   );

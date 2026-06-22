@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
@@ -36,6 +36,9 @@ function Login() {
   // local-account form. SSO is the default; local is a secondary path.
   const [ssoEnabled, setSsoEnabled] = useState(false);
   const [showLocal, setShowLocal] = useState(false);
+  const [redirecting, setRedirecting] = useState(false);
+
+  const usernameRef = useRef(null);
 
   // Get the page user was trying to access
   const from = location.state?.from?.pathname || '/';
@@ -51,8 +54,18 @@ function Login() {
   }, [location.search]);
 
   const startSso = () => {
+    setRedirecting(true);
     window.location.href = getSsoLoginUrl();
   };
+
+  // Local form mounts late (after auth config resolves), so autoFocus on the
+  // username field won't fire — move focus explicitly when it appears.
+  const localVisible = !ssoEnabled || showLocal;
+  useEffect(() => {
+    if (localVisible) {
+      usernameRef.current?.focus();
+    }
+  }, [localVisible]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -69,9 +82,6 @@ function Login() {
 
     setLoading(false);
   };
-
-  // Show the local form when SSO is unavailable or the user chose it.
-  const localVisible = !ssoEnabled || showLocal;
 
   return (
     <Box
@@ -132,11 +142,13 @@ function Login() {
               fullWidth
               variant="contained"
               size="large"
-              startIcon={<VpnKeyIcon />}
+              startIcon={redirecting ? <CircularProgress size={20} color="inherit" /> : <VpnKeyIcon />}
               onClick={startSso}
+              disabled={redirecting}
+              aria-busy={redirecting}
               sx={{ py: 1.5, fontWeight: 600, fontSize: '1rem' }}
             >
-              Sign in with 6D SSO
+              {redirecting ? 'Redirecting…' : 'Sign in with 6D SSO'}
             </Button>
             {!showLocal && (
               <Box sx={{ textAlign: 'center', mt: 2 }}>
@@ -162,6 +174,9 @@ function Login() {
           <TextField
             fullWidth
             label="Username"
+            name="username"
+            autoComplete="username"
+            inputRef={usernameRef}
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             disabled={loading}
@@ -179,6 +194,8 @@ function Login() {
           <TextField
             fullWidth
             label="Password"
+            name="password"
+            autoComplete="current-password"
             type={showPassword ? 'text' : 'password'}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -195,6 +212,8 @@ function Login() {
                   <IconButton
                     onClick={() => setShowPassword(!showPassword)}
                     edge="end"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    tabIndex={-1}
                   >
                     {showPassword ? <VisibilityOffIcon /> : <VisibilityIcon />}
                   </IconButton>
@@ -209,13 +228,15 @@ function Login() {
             variant="contained"
             size="large"
             disabled={loading || !username || !password}
+            aria-busy={loading}
+            startIcon={loading ? <CircularProgress size={20} color="inherit" /> : null}
             sx={{
               py: 1.5,
               fontWeight: 600,
               fontSize: '1rem',
             }}
           >
-            {loading ? <CircularProgress size={24} /> : 'Sign In'}
+            {loading ? 'Signing in…' : 'Sign In'}
           </Button>
         </form>
         )}

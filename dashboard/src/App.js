@@ -6,6 +6,7 @@ import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import AuroraBackground from './components/AuroraBackground';
 import ProtectedRoute from './components/ProtectedRoute';
+import { FeedbackProvider } from './components/Feedback';
 import { AuthProvider } from './context/AuthContext';
 import Dashboard from './pages/Dashboard';
 import ScanPage from './pages/ScanPage';
@@ -146,8 +147,10 @@ function AppRoutes() {
 function App() {
   return (
     <AuthProvider>
-      <AuroraBackground />
-      <AppRoutes />
+      <FeedbackProvider>
+        <AuroraBackground />
+        <AppRoutes />
+      </FeedbackProvider>
     </AuthProvider>
   );
 }
