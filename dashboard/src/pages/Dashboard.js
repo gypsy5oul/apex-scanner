@@ -19,15 +19,13 @@ import { useTheme } from '@mui/material/styles';
 import SecurityIcon from '@mui/icons-material/Security';
 import BugReportIcon from '@mui/icons-material/BugReport';
 import InventoryIcon from '@mui/icons-material/Inventory';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import WarningIcon from '@mui/icons-material/Warning';
 import ErrorIcon from '@mui/icons-material/Error';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import { getStats, healthCheck, getRecentScans } from '../api';
+import { getStats, getRecentScans } from '../api';
 import { PageHeaderSkeleton, StatCardsSkeleton, CardGridSkeleton } from '../components/LoadingSkeletons';
 import { Reveal, CountUp } from '../components/Motion';
 import PageHeader from '../components/PageHeader';
@@ -134,20 +132,17 @@ function SeverityBar({ critical, high, medium, low }) {
 function Dashboard() {
   const navigate = useNavigate();
   const [stats, setStats] = useState(null);
-  const [health, setHealth] = useState(null);
   const [recentScans, setRecentScans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const fetchData = async () => {
     try {
-      const [statsRes, healthRes, scansRes] = await Promise.all([
+      const [statsRes, scansRes] = await Promise.all([
         getStats(),
-        healthCheck(),
         getRecentScans(5),
       ]);
       setStats(statsRes.data);
-      setHealth(healthRes.data);
       setRecentScans(scansRes.data?.scans || []);
     } catch (err) {
       setError(err.message);
@@ -200,35 +195,6 @@ function Dashboard() {
         }
       />
 
-      {/* Health Status */}
-      {health && (
-        <Alert
-          severity={health.status === 'healthy' ? 'success' : 'warning'}
-          sx={{ mb: 3, borderRadius: 2 }}
-          icon={health.status === 'healthy' ? <CheckCircleIcon /> : <WarningIcon />}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <Typography fontWeight={600}>System Status: {health.status}</Typography>
-            {health.components?.redis && (
-              <Chip
-                label={`Redis: ${health.components.redis.status}`}
-                size="small"
-                color={health.components.redis.status === 'connected' ? 'success' : 'error'}
-                variant="outlined"
-              />
-            )}
-            {health.components?.celery && (
-              <Chip
-                label={`Celery: ${health.components.celery.status}`}
-                size="small"
-                color={health.components.celery.status === 'connected' ? 'success' : 'error'}
-                variant="outlined"
-              />
-            )}
-          </Box>
-        </Alert>
-      )}
-
       {error && (
         <Alert severity="error" sx={{ mb: 3, borderRadius: 2 }}>
           {error}
@@ -237,7 +203,7 @@ function Dashboard() {
 
       {/* Stats Grid */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid item xs={12} sm={6} lg={3}>
+        <Grid item xs={12} sm={6} lg={4}>
           <Reveal delay={0.05} sx={{ height: '100%' }}>
             <StatCard
               title="Images Scanned"
@@ -248,19 +214,8 @@ function Dashboard() {
             />
           </Reveal>
         </Grid>
-        <Grid item xs={12} sm={6} lg={3}>
+        <Grid item xs={12} sm={6} lg={4}>
           <Reveal delay={0.11} sx={{ height: '100%' }}>
-            <StatCard
-              title="Active Scanners"
-              value={Object.values(stats?.scanners_enabled || {}).filter(Boolean).length}
-              subtitle="Grype, Trivy, Syft"
-              icon={<SecurityIcon />}
-              color="#4caf50"
-            />
-          </Reveal>
-        </Grid>
-        <Grid item xs={12} sm={6} lg={3}>
-          <Reveal delay={0.17} sx={{ height: '100%' }}>
             <StatCard
               title="Critical + High"
               value={totalVulns}
@@ -270,8 +225,8 @@ function Dashboard() {
             />
           </Reveal>
         </Grid>
-        <Grid item xs={12} sm={6} lg={3}>
-          <Reveal delay={0.23} sx={{ height: '100%' }}>
+        <Grid item xs={12} sm={6} lg={4}>
+          <Reveal delay={0.17} sx={{ height: '100%' }}>
             <StatCard
               title="Scan Timeout"
               value={`${stats?.configuration?.scan_timeout || 300}s`}

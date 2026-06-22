@@ -181,35 +181,6 @@ function Sidebar({ mobileOpen, onClose, drawerWidth }) {
         )}
       </Box>
 
-      <Divider />
-      <Box sx={{ p: 2 }}>
-        {/* Scanners Status */}
-        <Box
-          sx={{
-            p: 2,
-            borderRadius: 2,
-            bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
-          }}
-        >
-          <Typography variant="caption" color="text.secondary" display="block">
-            Scanners Active
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
-            <Box
-              sx={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                bgcolor: 'success.main',
-                mt: 0.5,
-              }}
-            />
-            <Typography variant="body2" fontWeight={500}>
-              Grype, Trivy, Syft
-            </Typography>
-          </Box>
-        </Box>
-      </Box>
     </Box>
   );
 

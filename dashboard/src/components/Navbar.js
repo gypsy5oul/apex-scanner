@@ -6,7 +6,6 @@ import {
   Typography,
   IconButton,
   Box,
-  Chip,
   Tooltip,
   Avatar,
   Menu,
@@ -18,7 +17,6 @@ import {
 import MenuIcon from '@mui/icons-material/Menu';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
-import NotificationsIcon from '@mui/icons-material/Notifications';
 import LogoutIcon from '@mui/icons-material/Logout';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import { useTheme } from '../context/ThemeContext';
@@ -40,13 +38,6 @@ function Navbar({ onMenuClick }) {
     navigate('/login');
   };
 
-  const scannerChipSx = {
-    bgcolor: (theme) => alpha(theme.palette.success.main, 0.1),
-    color: 'success.main',
-    fontWeight: 600,
-    fontSize: '0.7rem',
-    height: 24,
-  };
   const iconBtnSx = {
     color: 'text.primary',
     bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
@@ -71,13 +62,6 @@ function Navbar({ onMenuClick }) {
         <Box sx={{ flexGrow: 1 }} />
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          {/* Scanner Status Chips */}
-          <Box sx={{ display: { xs: 'none', md: 'flex' }, gap: 0.5, mr: 2 }}>
-            <Chip label="Grype" size="small" sx={scannerChipSx} />
-            <Chip label="Trivy" size="small" sx={scannerChipSx} />
-            <Chip label="Syft" size="small" sx={scannerChipSx} />
-          </Box>
-
           {/* Dark Mode Toggle */}
           <Tooltip title={mode === 'dark' ? 'Light mode' : 'Dark mode'}>
             <IconButton
@@ -86,13 +70,6 @@ function Navbar({ onMenuClick }) {
               sx={iconBtnSx}
             >
               {mode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
-            </IconButton>
-          </Tooltip>
-
-          {/* Notifications */}
-          <Tooltip title="Notifications">
-            <IconButton aria-label="Notifications" sx={iconBtnSx}>
-              <NotificationsIcon />
             </IconButton>
           </Tooltip>
 
