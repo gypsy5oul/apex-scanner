@@ -203,19 +203,30 @@ function Dashboard() {
 
       {/* Stats Grid */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid item xs={12} sm={6} lg={4}>
+        <Grid item xs={12} sm={6} lg={3}>
           <Reveal delay={0.05} sx={{ height: '100%' }}>
             <StatCard
-              title="Images Scanned"
+              title="Unique Images"
               value={stats?.total_images_scanned || 0}
-              subtitle="All time"
+              subtitle="Distinct images, all time"
               icon={<InventoryIcon />}
               color="#2196f3"
             />
           </Reveal>
         </Grid>
-        <Grid item xs={12} sm={6} lg={4}>
+        <Grid item xs={12} sm={6} lg={3}>
           <Reveal delay={0.11} sx={{ height: '100%' }}>
+            <StatCard
+              title="Total Scans"
+              value={stats?.total_scans || 0}
+              subtitle="Scan runs"
+              icon={<SecurityIcon />}
+              color="#4caf50"
+            />
+          </Reveal>
+        </Grid>
+        <Grid item xs={12} sm={6} lg={3}>
+          <Reveal delay={0.17} sx={{ height: '100%' }}>
             <StatCard
               title="Critical + High"
               value={totalVulns}
@@ -225,8 +236,8 @@ function Dashboard() {
             />
           </Reveal>
         </Grid>
-        <Grid item xs={12} sm={6} lg={4}>
-          <Reveal delay={0.17} sx={{ height: '100%' }}>
+        <Grid item xs={12} sm={6} lg={3}>
+          <Reveal delay={0.23} sx={{ height: '100%' }}>
             <StatCard
               title="Scan Timeout"
               value={`${stats?.configuration?.scan_timeout || 300}s`}

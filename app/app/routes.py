@@ -1139,11 +1139,20 @@ async def get_stats(_user: TokenData = Depends(get_current_user)):
     """Get scanner statistics"""
     redis_client = get_redis_client()
 
-    # Get basic stats from Redis (using SCAN for performance)
-    total_scans = len(scan_redis_keys(redis_client, "history:*", count=200))
+    # Distinct images = one history:* list per image name (all-time, stable).
+    unique_images = len(scan_redis_keys(redis_client, "history:*", count=200))
+
+    # Total scan RUNS = individual scan-record hashes still retained. Sourced
+    # from the same monitor the Workers page uses, so the two pages reconcile.
+    try:
+        from app.worker_monitor import get_monitor
+        total_scans = get_monitor().get_task_stats().get("total_scans", 0)
+    except Exception:
+        total_scans = 0
 
     return {
-        "total_images_scanned": total_scans,
+        "total_images_scanned": unique_images,
+        "total_scans": total_scans,
         "scanners_enabled": {
             "grype": settings.ENABLE_GRYPE,
             "trivy": settings.ENABLE_TRIVY,
