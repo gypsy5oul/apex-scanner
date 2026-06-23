@@ -3,6 +3,7 @@ Advanced Risk Scoring Model
 Custom weighted scoring based on exploitability, network exposure, and other factors
 """
 import json
+import math
 import httpx
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
@@ -285,11 +286,13 @@ class RiskScoringEngine:
         if factors.is_actively_exploited:
             score = max(score, 9.0)
 
-        # Exploit-probability (EPSS) boost.
-        if factors.epss_score >= 0.5:
-            score += 1.0
-        elif factors.epss_score >= 0.1:
-            score += 0.5
+        # Exploit-probability (EPSS) boost — CONTINUOUS across the curve rather
+        # than a coarse 0.1/0.5 step. The empirical exploit "knee" is ~0.088
+        # (Shimizu & Hashimoto, IEEE Access 2026), and leading tools treat EPSS
+        # as a continuous signal — a stepped cutoff under-credited the many
+        # genuinely-exploitable vulns sitting between 0.088 and 0.5. Scales to a
+        # max of +1.5 (capped so it can't outweigh the severity anchor).
+        score += min(1.5, max(0.0, factors.epss_score) * 2.0)
 
         # No fix available raises urgency.
         if not factors.fix_available:
@@ -528,25 +531,36 @@ class RiskScoringEngine:
         low = severity_distribution.get("low", 0)
 
         # The highest severity PRESENT sets the band (floor); the count within
-        # that band scales the score upward. This keeps the level intuitive:
-        # any critical -> critical band, many highs -> high band, etc., and is
-        # monotonic (adding a worse finding can only raise the score).
+        # that band scales the score upward via a SUB-LINEAR (log) count power
+        # instead of a hard cap. A hard cap saturated — an image with 6 and one
+        # with 50 criticals scored the same; the log power keeps discriminating
+        # (cf. Qualys TruRisk's Count^(1/100) term) while staying monotonic.
         if crit > 0:
-            score = 7.0 + min(3.0, crit * 0.5)     # 1 crit -> 7.5, 6+ -> 10 (critical)
+            score = 7.0 + 3.0 * self._count_intensity(crit, full_at=10)
         elif high > 0:
-            score = 5.0 + min(2.5, high * 0.3)     # ~7+ highs -> high band
+            score = 5.0 + 2.0 * self._count_intensity(high, full_at=12)
         elif med > 0:
-            score = 2.5 + min(1.4, med * 0.06)     # mostly-medium -> low/medium
+            score = 2.5 + 1.5 * self._count_intensity(med, full_at=40)
         elif low > 0:
-            score = 1.0 + min(0.9, low * 0.04)
+            score = 1.0 + 0.9 * self._count_intensity(low, full_at=100)
         else:
             score = 0.0
 
-        # Exploit-likelihood boost, then KEV (actively exploited) critical floor.
-        score += min(1.0, high_epss_count * 0.5)
+        # Exploit-likelihood boost (scaled by how many high-EPSS vulns), then
+        # KEV (actively exploited) forces a critical floor.
+        score += 1.0 * self._count_intensity(high_epss_count, full_at=10)
         if kev_count > 0:
             score = max(score, 9.0)
         return min(10.0, score)
+
+    @staticmethod
+    def _count_intensity(count: int, full_at: int) -> float:
+        """Sub-linear (log) scaling of a finding count into [0, 1], reaching
+        1.0 at `full_at` findings. Unlike a hard cap this keeps discriminating
+        between, e.g., 2 vs 50 findings while never decreasing with count."""
+        if count <= 0:
+            return 0.0
+        return min(1.0, math.log10(1 + count) / math.log10(1 + full_at))
 
     def _generate_image_recommendations(
         self,
