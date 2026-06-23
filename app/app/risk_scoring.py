@@ -419,37 +419,46 @@ class RiskScoringEngine:
 
         vulnerabilities = json.loads(vulns_data)
 
-        # Calculate individual risk scores
-        vuln_scores = []
+        # Per-vulnerability weighted scores — kept only for the top_risks list
+        # below (supplementary detail), NOT for the headline image score.
+        vuln_scores = [self.calculate_risk_score(v) for v in vulnerabilities]
+
+        # Severity distribution comes from the SCANNER-assigned severity — the
+        # authoritative, always-populated signal. (The per-vuln weighted level
+        # collapses everything to "low" when CVSS metrics are absent, which is
+        # why the old aggregate ignored criticals entirely.)
         risk_distribution = defaultdict(int)
-
+        high_epss = 0
+        kev_count = 0
         for vuln in vulnerabilities:
-            score_result = self.calculate_risk_score(vuln)
-            vuln_scores.append(score_result)
-            risk_distribution[score_result["risk_level"]] += 1
+            sev = (vuln.get("severity") or "unknown").strip().lower()
+            risk_distribution[sev] += 1
+            try:
+                if float(vuln.get("epss_score") or 0) >= 0.5:
+                    high_epss += 1
+            except (ValueError, TypeError):
+                pass
+            if vuln.get("in_kev") or vuln.get("kev_match"):
+                kev_count += 1
 
-        # Calculate aggregate metrics
+        # Supplementary per-vuln metrics (shown as detail, not the headline).
         if vuln_scores:
             max_score = max(vs["weighted_score"] for vs in vuln_scores)
             avg_score = sum(vs["weighted_score"] for vs in vuln_scores) / len(vuln_scores)
-            actively_exploited = sum(
-                1 for vs in vuln_scores
-                if vs["factors"].get("is_actively_exploited")
-            )
         else:
             max_score = 0
             avg_score = 0
-            actively_exploited = 0
+        actively_exploited = kev_count
 
-        # Calculate overall image risk
+        # Headline image risk — severity-driven and saturating: the worst
+        # findings dominate, more low/medium findings can never lower it, KEV
+        # forces a critical floor, high-EPSS adds an exploit-likelihood boost.
         overall_score = self._calculate_image_aggregate_score(
-            max_score, avg_score, risk_distribution, actively_exploited
+            risk_distribution, high_epss, kev_count
         )
-
-        # Determine overall risk level
         overall_level = self._determine_risk_level(
             overall_score,
-            RiskFactors(is_actively_exploited=actively_exploited > 0)
+            RiskFactors(is_actively_exploited=kev_count > 0)
         )
 
         # Get top risks
@@ -482,34 +491,41 @@ class RiskScoringEngine:
 
     def _calculate_image_aggregate_score(
         self,
-        max_score: float,
-        avg_score: float,
-        risk_distribution: Dict[str, int],
-        actively_exploited: int
+        severity_distribution: Dict[str, int],
+        high_epss_count: int = 0,
+        kev_count: int = 0,
     ) -> float:
-        """Calculate aggregate risk score for an image"""
-        # Weighted combination of factors
-        score = 0.0
+        """Aggregate an image's risk (0-10) from its scanner-severity counts.
 
-        # Max score has highest impact
-        score += max_score * 0.4
+        Severity-driven and SATURATING: the worst findings dominate, and adding
+        more low/medium findings can never reduce the score (no averaging /
+        dilution). KEV (actively exploited) forces a critical floor; a high-EPSS
+        population adds an exploit-likelihood boost.
+        """
+        crit = severity_distribution.get("critical", 0)
+        high = severity_distribution.get("high", 0)
+        med = severity_distribution.get("medium", 0)
+        low = severity_distribution.get("low", 0)
 
-        # Average score shows overall health
-        score += avg_score * 0.2
+        # The highest severity PRESENT sets the band (floor); the count within
+        # that band scales the score upward. This keeps the level intuitive:
+        # any critical -> critical band, many highs -> high band, etc., and is
+        # monotonic (adding a worse finding can only raise the score).
+        if crit > 0:
+            score = 7.0 + min(3.0, crit * 0.5)     # 1 crit -> 7.5, 6+ -> 10 (critical)
+        elif high > 0:
+            score = 5.0 + min(2.5, high * 0.3)     # ~7+ highs -> high band
+        elif med > 0:
+            score = 2.5 + min(1.4, med * 0.06)     # mostly-medium -> low/medium
+        elif low > 0:
+            score = 1.0 + min(0.9, low * 0.04)
+        else:
+            score = 0.0
 
-        # Critical and high counts
-        critical_count = risk_distribution.get("critical", 0)
-        high_count = risk_distribution.get("high", 0)
-
-        if critical_count > 0:
-            score += min(3.0, critical_count * 0.5)  # Cap at 3 points
-        if high_count > 0:
-            score += min(2.0, high_count * 0.2)  # Cap at 2 points
-
-        # Actively exploited is severe
-        if actively_exploited > 0:
-            score += 2.0
-
+        # Exploit-likelihood boost, then KEV (actively exploited) critical floor.
+        score += min(1.0, high_epss_count * 0.5)
+        if kev_count > 0:
+            score = max(score, 9.0)
         return min(10.0, score)
 
     def _generate_image_recommendations(
