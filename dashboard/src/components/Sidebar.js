@@ -29,6 +29,7 @@ import PolicyIcon from '@mui/icons-material/Policy';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import GavelIcon from '@mui/icons-material/Gavel';
+import VerifiedIcon from '@mui/icons-material/Verified';
 import ApexLogo from './ApexLogo';
 import { useAuth } from '../context/AuthContext';
 
@@ -38,6 +39,7 @@ const mainMenuItems = [
   { text: 'IaC Scan', icon: <SecurityIcon />, path: '/iac-scan' },
   { text: 'Batch Scan', icon: <BatchIcon />, path: '/batch' },
   { text: 'Scan History', icon: <HistoryIcon />, path: '/history' },
+  { text: 'Approved Base Images', icon: <VerifiedIcon />, path: '/approved-base-images' },
 ];
 
 const analysisMenuItems = [

@@ -124,6 +124,10 @@ export const updateSchedule = (name, data) => apiV2.put(`/schedules/${name}`, da
 export const deleteSchedule = (name) => apiV2.delete(`/schedules/${name}`);
 export const runScheduleNow = (name) => apiV2.post(`/schedules/${name}/run`);
 
+// Approved Base Images (GitLab catalog)
+export const getApprovedBaseImages = (refresh = false) =>
+  apiV2.get('/approved-base-images', { params: { refresh } });
+
 // Base Image Tracking
 export const getBaseImages = () => apiV2.get('/base-images');
 export const registerBaseImage = (data) => apiV2.post('/base-images', data);

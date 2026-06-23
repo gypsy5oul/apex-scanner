@@ -2718,3 +2718,28 @@ async def get_vex_enriched_vulns(
         "total": len(enriched),
         "vex_applied": True,
     }
+
+
+# ============== Approved Base Images (GitLab catalog) ==============
+@router_v2.get(
+    "/approved-base-images",
+    summary="Approved Base Images catalog",
+    description="Hardened/approved base images published in GitLab catalog.json. "
+                "Cached ~15m; pass refresh=true to force a live re-fetch.",
+)
+async def approved_base_images(
+    refresh: bool = Query(False, description="Bypass cache and re-fetch from GitLab"),
+    _user: TokenData = Depends(get_current_user),
+):
+    """Return the approved base-image catalog (all authenticated users)."""
+    from app.gitlab_catalog import get_catalog
+    try:
+        return get_catalog(force_refresh=refresh)
+    except RuntimeError as exc:
+        # Feature not configured.
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not load the approved base images catalog: {exc}",
+        )

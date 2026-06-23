@@ -23,6 +23,7 @@ import BaseImageDetail from './pages/BaseImageDetail';
 import SystemStatus from './pages/SystemStatus';
 import WorkerMonitor from './pages/WorkerMonitor';
 import IacScan from './pages/IacScan';
+import ApprovedBaseImages from './pages/ApprovedBaseImages';
 import Policies from './pages/Policies';
 import Compliance from './pages/Compliance';
 import DependencyGraph from './pages/DependencyGraph';
@@ -101,6 +102,7 @@ function AppRoutes() {
         <Route path="/batch" element={<BatchScan />} />
         <Route path="/history" element={<History />} />
         <Route path="/iac-scan" element={<IacScan />} />
+        <Route path="/approved-base-images" element={<ApprovedBaseImages />} />
 
         {/* Admin-Only Routes — analysis & management */}
         <Route path="/compare" element={

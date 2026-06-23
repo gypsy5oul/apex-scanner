@@ -191,6 +191,16 @@ class Settings(BaseSettings):
     OIDC_RP_LOGOUT: bool = Field(default=False, description="Also end the Keycloak session on logout")
     OIDC_POST_LOGIN_REDIRECT: str = Field(default="/", description="Where to send the browser after SSO login")
 
+    # --- Approved Base Images catalog (GitLab-hosted catalog.json) ---
+    GITLAB_CATALOG_ENABLED: bool = Field(default=False, description="Enable the Approved Base Images catalog feed")
+    GITLAB_BASE_URL: str = Field(default="https://gitlab.sixdee", description="GitLab base URL")
+    GITLAB_PROJECT_ID: str = Field(default="13529", description="GitLab project id holding catalog.json")
+    GITLAB_CATALOG_PATH: str = Field(default="catalog.json", description="Path of the catalog file in the repo")
+    GITLAB_CATALOG_REF: str = Field(default="development", description="Git ref/branch to read the catalog from")
+    GITLAB_TOKEN: str = Field(default="", description="GitLab PRIVATE-TOKEN (read_repository). Keep in .env, never commit.")
+    GITLAB_CA_CERT: str = Field(default="", description="CA/cert path to verify GitLab TLS (self-signed pinned cert; empty = system trust)")
+    GITLAB_CATALOG_TTL: int = Field(default=900, description="Seconds to cache the catalog in Redis (default 15m)")
+
     @property
     def effective_redis_url(self) -> str:
         """Build Redis URL with authentication and TLS scheme."""

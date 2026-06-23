@@ -53,7 +53,17 @@ services:
       - OIDC_ADMIN_GROUP=devops
       - OIDC_CA_CERT=/etc/vault-ca/6d-corp.pem
       - OIDC_RP_LOGOUT=true
+      # Approved Base Images — GitLab-hosted catalog.json (self-signed TLS pinned)
+      - GITLAB_CATALOG_ENABLED=true
+      - GITLAB_BASE_URL=https://gitlab.sixdee
+      - GITLAB_PROJECT_ID=13529
+      - GITLAB_CATALOG_PATH=catalog.json
+      - GITLAB_CATALOG_REF=development
+      - GITLAB_TOKEN=${GITLAB_TOKEN}
+      - GITLAB_CA_CERT=/etc/vault-ca/gitlab-sixdee.pem
     extra_hosts:
       - "keycloak.6dcorp.in:10.0.20.110"
+      - "gitlab.sixdee:10.0.13.64"
     volumes:
       - /opt/vault/cert/6d-corp.pem:/etc/vault-ca/6d-corp.pem:ro
+      - /opt/vault/cert/gitlab-sixdee.pem:/etc/vault-ca/gitlab-sixdee.pem:ro
