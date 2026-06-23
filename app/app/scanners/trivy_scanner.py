@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from typing import Dict, Any, Optional, Tuple
 from .base import BaseScanner
+from .normalization import normalize_cvss
 
 # Shared Trivy cache path (pre-downloaded at build time)
 _TRIVY_SHARED_CACHE = os.path.expanduser("~/.cache/trivy")
@@ -196,8 +197,8 @@ class TrivyScanner(BaseScanner):
                 "error": f"JSON parse error: {str(e)}"
             }
 
-    def _extract_cvss(self, vuln: Dict) -> str:
-        """Extract CVSS score from vulnerability data"""
+    def _extract_cvss(self, vuln: Dict) -> Optional[float]:
+        """Extract CVSS base score as a float, or None if unavailable."""
         # Try to get CVSS from various possible locations in Trivy output
         cvss = vuln.get("CVSS", {})
 
@@ -206,11 +207,11 @@ class TrivyScanner(BaseScanner):
             if "nvd" in cvss:
                 nvd_data = cvss["nvd"]
                 if isinstance(nvd_data, dict) and "V3Score" in nvd_data:
-                    return str(nvd_data["V3Score"])
+                    return normalize_cvss(nvd_data["V3Score"])
 
             # Try other vendors
             for vendor_data in cvss.values():
                 if isinstance(vendor_data, dict) and "V3Score" in vendor_data:
-                    return str(vendor_data["V3Score"])
+                    return normalize_cvss(vendor_data["V3Score"])
 
-        return "N/A"
+        return None

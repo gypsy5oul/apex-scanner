@@ -8,6 +8,7 @@ import shutil
 import subprocess
 from typing import Dict, Any, Optional, Tuple
 from .base import BaseScanner
+from .normalization import normalize_cvss
 
 
 class GrypeScanner(BaseScanner):
@@ -171,11 +172,13 @@ class GrypeScanner(BaseScanner):
                 vuln_data = match.get("vulnerability", {})
                 artifact_data = match.get("artifact", {})
 
-                # Extract CVSS score
+                # Extract CVSS score (normalized to float | None — never "N/A")
                 cvss_data = vuln_data.get("cvss", [])
-                cvss_score = "N/A"
+                cvss_score = None
                 if cvss_data:
-                    cvss_score = cvss_data[0].get("metrics", {}).get("baseScore", "N/A")
+                    cvss_score = normalize_cvss(
+                        cvss_data[0].get("metrics", {}).get("baseScore")
+                    )
 
                 vuln = {
                     "id": vuln_data.get("id", "N/A"),

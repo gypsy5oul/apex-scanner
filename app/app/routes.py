@@ -291,7 +291,7 @@ class VulnerabilityItem(BaseModel):
     fix_available: bool = Field(..., description="Whether a fix is available")
     fix_version: Optional[str] = Field(None, description="Version with fix")
     description: Optional[str] = Field(None, description="Vulnerability description")
-    cvss_score: Optional[str] = Field(None, description="CVSS score")
+    cvss_score: Optional[float] = Field(None, description="CVSS base score (0-10), or null if unscored")
     found_by: List[str] = Field(default_factory=list, description="Scanners that found this")
     scan_id: str = Field(..., description="Scan ID where found")
     image_name: str = Field(..., description="Image name")
