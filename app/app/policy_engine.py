@@ -322,7 +322,26 @@ class PolicyEngine:
         summary = {"fail": 0, "warn": 0, "pass": 0}
 
         for rule in policy.rules:
-            matched = self._evaluate_rule(rule, vulnerabilities)
+            try:
+                matched = self._evaluate_rule(rule, vulnerabilities)
+            except Exception as exc:
+                # Fail CLOSED: a malformed/unevaluable rule must not silently
+                # let an image through. Record it as a failure and continue
+                # evaluating the remaining rules.
+                logger.error(
+                    "Policy rule evaluation error — failing closed",
+                    policy_id=policy_id, rule=rule, error=str(exc),
+                )
+                summary["fail"] = summary.get("fail", 0) + 1
+                violations.append({
+                    "rule": rule,
+                    "action": "fail",
+                    "message": f"Rule could not be evaluated (treated as a violation): {exc}",
+                    "matched_count": 0,
+                    "matched_items": [],
+                })
+                continue
+
             if matched:
                 action = rule.get("action", "warn")
                 summary[action] = summary.get(action, 0) + len(matched)
@@ -330,7 +349,10 @@ class PolicyEngine:
                 violations.append({
                     "rule": rule,
                     "action": action,
-                    "message": rule.get("description", f"Rule {rule['field']} {rule['operator']} {rule['value']}"),
+                    "message": rule.get(
+                        "description",
+                        f"Rule {rule.get('field')} {rule.get('operator')} {rule.get('value')}",
+                    ),
                     "matched_count": len(matched),
                     "matched_items": matched[:10]  # Limit to first 10
                 })
@@ -384,6 +406,9 @@ class PolicyEngine:
         operator = rule.get("operator")
         value = rule.get("value")
 
+        if not field or not operator:
+            raise ValueError(f"Malformed policy rule (missing field/operator): {rule}")
+
         matched = []
 
         for item in items:
@@ -435,6 +460,29 @@ class PolicyEngine:
 
         return item.get(field)
 
+    # Severity ordering — lets rules like `severity >= HIGH` work (a string
+    # severity can't be float()'d, which previously made the rule match nothing
+    # and the gate silently PASS).
+    SEVERITY_RANK = {
+        "CRITICAL": 5, "HIGH": 4, "MEDIUM": 3,
+        "LOW": 2, "NEGLIGIBLE": 1, "INFO": 0, "UNKNOWN": 0,
+    }
+
+    def _to_number(self, value: Any) -> Optional[float]:
+        """Coerce a value to a number for ordering, mapping severity names to
+        their rank. Returns None if it genuinely can't be ordered."""
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                rank = self.SEVERITY_RANK.get(value.strip().upper())
+                return float(rank) if rank is not None else None
+        return None
+
     def _compare(self, item_value: Any, operator: str, rule_value: Any) -> bool:
         """Compare values based on operator"""
         try:
@@ -448,17 +496,17 @@ class PolicyEngine:
                     return item_value.upper() != rule_value.upper()
                 return item_value != rule_value
 
-            elif operator == "greater_than":
-                return float(item_value) > float(rule_value)
-
-            elif operator == "less_than":
-                return float(item_value) < float(rule_value)
-
-            elif operator == "greater_or_equal":
-                return float(item_value) >= float(rule_value)
-
-            elif operator == "less_or_equal":
-                return float(item_value) <= float(rule_value)
+            elif operator in ("greater_than", "less_than", "greater_or_equal", "less_or_equal"):
+                a, b = self._to_number(item_value), self._to_number(rule_value)
+                if a is None or b is None:
+                    return False
+                if operator == "greater_than":
+                    return a > b
+                if operator == "less_than":
+                    return a < b
+                if operator == "greater_or_equal":
+                    return a >= b
+                return a <= b
 
             elif operator == "contains":
                 return str(rule_value).lower() in str(item_value).lower()

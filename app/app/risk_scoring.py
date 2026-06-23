@@ -19,7 +19,9 @@ logger = get_logger(__name__)
 @dataclass
 class RiskFactors:
     """Individual risk factors for a vulnerability"""
+    severity: str = "unknown"          # scanner-assigned severity (authoritative)
     base_cvss_score: float = 0.0
+    epss_score: float = 0.0            # exploit-probability (0-1)
     exploitability_score: float = 0.0
     impact_score: float = 0.0
     is_network_exploitable: bool = False
@@ -152,10 +154,21 @@ class RiskScoringEngine:
         attack_vector = cvss_metrics.get("attackVector", "").upper()
         factors.is_network_exploitable = attack_vector in ["NETWORK", "ADJACENT_NETWORK", "N", "A"]
 
+        # Scanner severity (authoritative) + EPSS exploit-probability — these
+        # are the populated signals the weighted score is anchored to.
+        factors.severity = (vulnerability.get("severity") or "unknown")
+        try:
+            factors.epss_score = float(vulnerability.get("epss_score") or 0)
+        except (ValueError, TypeError):
+            factors.epss_score = 0.0
+
         # Check for known exploits
         vuln_id = vulnerability.get("id", "")
         factors.has_known_exploit = self._check_known_exploit(vuln_id)
-        factors.is_actively_exploited = self._check_kev(vuln_id)
+        # Trust the enriched in_kev flag, falling back to the KEV-list lookup.
+        factors.is_actively_exploited = bool(
+            vulnerability.get("in_kev") or vulnerability.get("kev_match")
+        ) or self._check_kev(vuln_id)
 
         # Fix availability - check multiple possible field names
         if "fix_available" in vulnerability:
@@ -241,45 +254,52 @@ class RiskScoringEngine:
 
         return set()
 
+    # Severity floor on the 0-10 scale. Anchoring to the scanner-assigned
+    # severity (which is always present) prevents a CVSS-9.8 critical from
+    # collapsing to "low" when the optional CVSS-vector metrics are absent.
+    SEVERITY_BASE = {
+        "critical": 9.0,
+        "high": 7.0,
+        "medium": 5.0,
+        "low": 3.0,
+        "negligible": 1.0,
+        "unknown": 0.0,
+    }
+
     def _calculate_weighted_score(self, factors: RiskFactors) -> float:
-        """Calculate the weighted risk score"""
-        score = 0.0
+        """Weighted risk score (0-10), anchored to severity + populated signals.
 
-        # Base CVSS contribution (normalized to 0-10)
-        score += factors.base_cvss_score * self.weights["base_cvss"]
+        The old formula leaned on CVSS-vector metrics (exploitability, attack
+        vector, known-exploit) that nothing in the pipeline populates, so every
+        vuln scored ~base_cvss*0.25 and criticals were labelled "low". This
+        anchors to the scanner severity and the signals we actually have
+        (CVSS base, EPSS, KEV, fix availability, component criticality).
+        """
+        # Base: the higher of the severity floor and the raw CVSS base score.
+        score = max(
+            self.SEVERITY_BASE.get((factors.severity or "unknown").lower(), 0.0),
+            factors.base_cvss_score or 0.0,
+        )
 
-        # Exploitability contribution
-        exploit_score = factors.exploitability_score / 10 * 10  # Normalize
-        score += exploit_score * self.weights["exploitability"]
-
-        # Network exposure
-        if factors.is_network_exploitable:
-            score += 10 * self.weights["network_exposure"]
-
-        # Known exploit
-        if factors.has_known_exploit:
-            score += 10 * self.weights["known_exploit"]
-
-        # Active exploitation (highest risk)
+        # Actively exploited (KEV) is the strongest signal -> critical floor.
         if factors.is_actively_exploited:
-            score += 10 * self.weights["active_exploitation"]
+            score = max(score, 9.0)
 
-        # Fix availability (reduces risk if fix exists)
+        # Exploit-probability (EPSS) boost.
+        if factors.epss_score >= 0.5:
+            score += 1.0
+        elif factors.epss_score >= 0.1:
+            score += 0.5
+
+        # No fix available raises urgency.
         if not factors.fix_available:
-            score += 5 * self.weights["fix_availability"]
+            score += 0.5
 
-        # Age factor (older unfixed vulns are higher risk)
-        if factors.age_days > 365 and not factors.fix_available:
-            score += 5 * self.weights["age"]
-        elif factors.age_days > 90 and not factors.fix_available:
-            score += 3 * self.weights["age"]
-
-        # Component criticality
+        # Critical system components.
         critical_types = ["kernel", "openssl", "glibc", "openssh", "sudo"]
-        if any(ct in factors.affected_component_type.lower() for ct in critical_types):
-            score += 5 * self.weights["component_criticality"]
+        if any(ct in (factors.affected_component_type or "").lower() for ct in critical_types):
+            score += 0.5
 
-        # Ensure score is within bounds
         return min(10.0, max(0.0, score))
 
     def _determine_risk_level(self, score: float, factors: RiskFactors) -> str:

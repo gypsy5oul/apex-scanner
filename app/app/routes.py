@@ -455,11 +455,19 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
             # Completed scans must not be reused by tag because mutable tags
             # (e.g., :latest) can be repushed with new content.
             dedup_key = f"scan_dedup:{request.image_name}"
-            existing_scan_id = redis_client.get(dedup_key)
+            scan_id = str(uuid.uuid4())
 
-            if existing_scan_id:
-                # Verify the existing scan is still valid
-                existing_status = redis_client.hget(existing_scan_id, "status")
+            # Atomically claim the dedup slot (SET NX) — this is race-free, so two
+            # concurrent requests for the same image can't both start a scan. The
+            # winner proceeds; losers either join the in-progress scan or take
+            # over a stale slot. (The old GET-then-SETEX was a TOCTOU race.)
+            claimed = redis_client.set(dedup_key, scan_id, nx=True, ex=600)
+            if not claimed:
+                existing_scan_id = redis_client.get(dedup_key)
+                existing_status = (
+                    redis_client.hget(existing_scan_id, "status")
+                    if existing_scan_id else None
+                )
                 if existing_status == "in_progress":
                     logger.info(
                         "Returning existing in-progress scan (deduplication)",
@@ -471,12 +479,9 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
                         status=ScanStatus.IN_PROGRESS,
                         message="Scan already in progress for this image"
                     )
-                # If status is completed/failed/missing, allow a new scan.
-
-            scan_id = str(uuid.uuid4())
-
-            # Set deduplication key (expires in 10 minutes to prevent rapid re-scans)
-            redis_client.setex(dedup_key, 600, scan_id)
+                # Slot held by a completed/failed/missing scan — take it over for
+                # this fresh scan (mutable tags must be allowed to re-scan).
+                redis_client.set(dedup_key, scan_id, ex=600)
 
             logger.info(
                 "Initiating scan",

@@ -351,7 +351,13 @@ class CVSSEnricher:
         if total == 0:
             return {"total": 0}
 
-        scores = [v.get("cvss", {}).get("base_score", 0) for v in vulnerabilities]
+        # Keep only numeric base scores — a record may carry base_score=None
+        # (unscored CVE), which would crash max()/min()/sum() below.
+        scores = [
+            s for s in (
+                v.get("cvss", {}).get("base_score") for v in vulnerabilities
+            ) if isinstance(s, (int, float))
+        ]
         exploitability_levels = [
             v.get("exploitability", {}).get("risk_level", "Unknown")
             for v in vulnerabilities
@@ -369,7 +375,7 @@ class CVSSEnricher:
 
         return {
             "total": total,
-            "average_cvss": round(sum(scores) / total, 2) if scores else 0,
+            "average_cvss": round(sum(scores) / len(scores), 2) if scores else 0,
             "max_cvss": max(scores) if scores else 0,
             "min_cvss": min(scores) if scores else 0,
             "remote_exploitable": remote_exploitable,

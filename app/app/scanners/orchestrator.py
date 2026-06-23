@@ -4,6 +4,7 @@ Scanner orchestrator for managing multiple security scanners.
 Enterprise-grade: preflight checks, per-scanner retry, explicit
 tracking of requested vs succeeded vs failed scanners.
 """
+import os
 import time
 import logging
 from typing import Dict, Any, List, Optional, Callable
@@ -105,6 +106,14 @@ class ScannerOrchestrator:
                 f"{scanner_name} attempt {attempt}/{max_retries + 1} failed: "
                 f"{result.get('error', 'unknown')}"
             )
+            # Do NOT retry a timeout: re-running with the same timeout will just
+            # time out again and 3×SCAN_TIMEOUT blows past the Celery hard time
+            # limit (the task gets killed mid-retry, orphaning the scan).
+            if "timed out" in str(result.get("error", "")).lower():
+                logger.warning(
+                    f"{scanner_name} timed out — not retrying (would exceed the task budget)"
+                )
+                break
             if attempt <= max_retries:
                 time.sleep(_RETRY_DELAY_SECONDS)
 
@@ -202,6 +211,17 @@ class ScannerOrchestrator:
             f"secrets={merged['total_secrets']}, "
             f"packages={merged.get('sbom', {}).get('statistics', {}).get('total_packages', 0)}"
         )
+
+        # Clean up the raw per-scanner JSON written to base_output_dir (/tmp).
+        # The scanners already parsed them into `merged`; left behind they leak
+        # forever and fill the worker disk.
+        for _suffix in ("grype", "trivy"):
+            _raw = f"{base_output_dir}/{scan_id}_{_suffix}.json"
+            try:
+                if os.path.exists(_raw):
+                    os.remove(_raw)
+            except OSError as _exc:
+                self.logger.warning(f"Could not remove temp scan file {_raw}: {_exc}")
 
         return merged
 

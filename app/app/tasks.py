@@ -649,6 +649,7 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = True) -> 
                                 redis_client.set(f"vulns:{scan_id}", vulns, ex=settings.SCAN_RESULT_TTL)
 
                             SCANS_COMPLETED.labels(status='cache_hit', scanner='all').inc()
+                            SCANS_IN_PROGRESS.dec()  # pair the enqueue-time inc
                             return {**cached_data, "scan_id": scan_id, "cache_hit": True}
             else:
                 # Get digest for later caching even when skipping cache
@@ -1003,12 +1004,15 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = True) -> 
 
             redis_client.hset(scan_id, mapping={"status": "failed", "error": error_msg})
             SCANS_COMPLETED.labels(status='failure', scanner='exception').inc()
-            SCANS_IN_PROGRESS.dec()
 
-            # Retry on transient errors
+            # Retry on transient errors. Do NOT decrement the gauge here — the
+            # retried execution re-runs this task body and will decrement on its
+            # own terminal exit; decrementing now would double-count (gauge goes
+            # negative).
             if self.request.retries < self.max_retries:
                 raise self.retry(exc=e, countdown=30 * (self.request.retries + 1))
 
+            SCANS_IN_PROGRESS.dec()  # final failure (no more retries) → settle the gauge
             return {"scan_id": scan_id, "status": "failed", "error": error_msg}
 
 
@@ -1157,7 +1161,10 @@ def scan_base_images(self, batch_size: int = 5) -> Dict[str, Any]:
             thread_redis.ltrim(history_key, 0, settings.MAX_HISTORY_PER_IMAGE - 1)
             thread_redis.expire(history_key, settings.SCAN_RESULT_TTL)
 
-            # Run the scan
+            # Run the scan. scan_image always decrements SCANS_IN_PROGRESS on
+            # exit; this path calls it directly (no enqueue-time inc), so inc
+            # here to keep the gauge balanced (otherwise it drifts negative).
+            SCANS_IN_PROGRESS.inc()
             result = scan_image(image_name, scan_id)
 
             # Update base image tracker with results
@@ -1468,7 +1475,7 @@ def cleanup_old_scan_artifacts(self) -> Dict[str, Any]:
         retention_days=retention_days
     )
 
-    deleted = {"reports": 0, "sboms": 0, "errors": 0}
+    deleted = {"reports": 0, "sboms": 0, "tmp_scan_json": 0, "errors": 0}
 
     for label, directory in [("reports", settings.REPORTS_DIR), ("sboms", settings.SBOMS_DIR)]:
         if not os.path.isdir(directory):
@@ -1485,6 +1492,18 @@ def cleanup_old_scan_artifacts(self) -> Dict[str, Any]:
                     error=str(e)
                 )
                 deleted["errors"] += 1
+
+    # Backstop: raw per-scanner JSON in /tmp is normally removed at the end of
+    # each scan, but error paths can leave it behind — reap any older than the
+    # retention window so /tmp can't grow without bound.
+    for filepath in glob.glob("/tmp/*_grype.json") + glob.glob("/tmp/*_trivy.json"):
+        try:
+            if os.path.isfile(filepath) and os.path.getmtime(filepath) < cutoff_time:
+                os.remove(filepath)
+                deleted["tmp_scan_json"] += 1
+        except OSError as e:
+            logger.warning("Failed to delete temp scan json", path=filepath, error=str(e))
+            deleted["errors"] += 1
 
     logger.info(
         "Artifact cleanup completed",

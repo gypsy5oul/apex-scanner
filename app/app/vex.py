@@ -203,14 +203,28 @@ class VEXManager:
 
             statements = self.get_statements_for_cve(cve_id)
 
-            # Find most relevant statement (product match or generic)
+            # Pick the statement to apply: prefer one whose product actually
+            # matches the scanned image, else a GENERIC (product-less) statement.
+            # NEVER apply a statement scoped to a DIFFERENT product — doing so
+            # would let a VEX for image X silently suppress a finding on image Y.
             best_match = None
+            generic_match = None
+            pf = (product_filter or "").lower()
             for stmt in statements:
-                if product_filter and product_filter.lower() in stmt.get("product", "").lower():
-                    best_match = stmt
-                    break
-                if not best_match:
-                    best_match = stmt
+                stmt_product = (stmt.get("product") or "").strip().lower()
+                if stmt_product:
+                    # Product-scoped statement: require a real match (either name
+                    # contains the other, since product may be a short name or a
+                    # full image ref). Mismatch -> do not apply.
+                    if pf and (stmt_product in pf or pf in stmt_product):
+                        best_match = stmt
+                        break
+                    continue
+                # Product-less statement -> generic, applies to any image.
+                if generic_match is None:
+                    generic_match = stmt
+
+            best_match = best_match or generic_match
 
             if best_match:
                 vuln = {**vuln}  # Copy to avoid mutation
