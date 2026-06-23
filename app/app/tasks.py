@@ -1295,6 +1295,13 @@ celery.conf.beat_schedule = {
         'schedule': 86400.0,  # Every 24 hours (in seconds)
         'options': {'queue': 'system'}
     },
+    'reap-stale-scans': {
+        # Mark scans stuck in_progress (worker died / OOM / disk-full mid-scan)
+        # as failed so they don't pile up in the queue forever.
+        'task': 'reap_stale_scans',
+        'schedule': 600.0,  # Every 10 minutes
+        'options': {'queue': 'system'}
+    },
 }
 celery.conf.timezone = 'UTC'
 
@@ -1492,6 +1499,73 @@ def cleanup_old_scan_artifacts(self) -> Dict[str, Any]:
         "deleted": deleted,
         "timestamp": now_iso()
     }
+
+
+# ============== Stale-Scan Reaper ==============
+
+@celery.task(bind=True, name='reap_stale_scans')
+def reap_stale_scans(self) -> Dict[str, Any]:
+    """Mark scans stuck in_progress as failed.
+
+    When a worker dies mid-scan (OOM, disk-full, restart) without updating the
+    scan record, the hash is left at "in_progress" forever and clutters the
+    queue/history views. Any scan still in_progress well past the hard task
+    time limit is dead — flip it to failed and clear its dedup lock so the
+    image can be rescanned. Runs every 10 minutes via beat.
+    """
+    from datetime import datetime, timezone
+    import re
+
+    redis_client = get_redis_client()
+    # Hard task limit is SCAN_TIMEOUT*3; double it as a safe staleness cutoff.
+    stale_after = max(1800, settings.SCAN_TIMEOUT * 6)
+    now = datetime.now(timezone.utc)
+    uuid_re = re.compile(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    )
+
+    def _age(h):
+        ts = h.get("created_at") or h.get("scan_timestamp")
+        if not ts:
+            return None
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return (now - dt).total_seconds()
+        except Exception:
+            return None
+
+    cursor, reaped = 0, 0
+    while True:
+        cursor, keys = redis_client.scan(
+            cursor, match="????????-????-????-????-????????????", count=500
+        )
+        for key in keys:
+            if not uuid_re.match(key) or redis_client.type(key) != "hash":
+                continue
+            if redis_client.hget(key, "status") != "in_progress":
+                continue
+            h = redis_client.hgetall(key)
+            age = _age(h)
+            # Reap if clearly past the cutoff, or if it has no timestamp at all.
+            if age is not None and age < stale_after:
+                continue
+            redis_client.hset(key, mapping={
+                "status": "failed",
+                "error": "Scan interrupted (orphaned in_progress) — reaped by stale-scan cleanup",
+                "scan_quality": "failed",
+            })
+            img = h.get("image_name")
+            if img:
+                redis_client.delete(f"scan_dedup:{img}")
+            reaped += 1
+        if cursor == 0:
+            break
+
+    if reaped:
+        logger.warning("Reaped stale in_progress scans", count=reaped, stale_after_s=stale_after)
+    return {"reaped": reaped, "stale_after_seconds": stale_after, "timestamp": now_iso()}
 
 
 # ============== IaC Scanning Task ==============
