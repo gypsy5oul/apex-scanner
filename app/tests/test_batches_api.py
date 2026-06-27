@@ -87,3 +87,33 @@ def test_batch_policy_check(client, mock_redis):
     by = {x["scan_id"]: x for x in res["results"]}
     assert by["sa"]["passed"] is False
     assert by["sb"]["passed"] is True
+
+
+def test_batch_policy_check_owner_gated(client, mock_redis):
+    from app.policy_engine import PolicyEngine
+    pe = PolicyEngine()
+    pol = pe.create_policy(name="p1", description="",
+                           rules=[{"field": "severity", "operator": "equals",
+                                   "value": "CRITICAL", "action": "fail"}])
+    pid = pol.id if hasattr(pol, "id") else pol["id"]
+    _seed_batch(mock_redis, "b-alice", "alice", [("sa", "img-a", "completed", 0, 0, 0, 0)])
+    # bob (non-admin) must NOT be able to policy-check alice's batch
+    assert client.get(f"/api/v2/batches/b-alice/policy-check?policy_id={pid}",
+                      headers=_h("bob", "user")).status_code == 404
+    # admin can
+    assert client.get(f"/api/v2/batches/b-alice/policy-check?policy_id={pid}",
+                      headers=_h("admin", "admin")).status_code == 200
+
+
+def test_batch_policy_check_pending_for_noncompleted(client, mock_redis):
+    from app.policy_engine import PolicyEngine
+    pe = PolicyEngine()
+    pol = pe.create_policy(name="p2", description="",
+                           rules=[{"field": "severity", "operator": "equals",
+                                   "value": "CRITICAL", "action": "fail"}])
+    pid = pol.id if hasattr(pol, "id") else pol["id"]
+    _seed_batch(mock_redis, "b-alice", "alice",
+                [("sc", "img-c", "in_progress", 0, 0, 0, 0)])
+    res = client.get(f"/api/v2/batches/b-alice/policy-check?policy_id={pid}",
+                     headers=_h("alice", "user")).json()
+    assert res["results"][0]["passed"] is None

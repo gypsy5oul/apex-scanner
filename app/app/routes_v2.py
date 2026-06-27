@@ -147,7 +147,8 @@ async def list_batches(
             elif st:
                 in_progress += 1
         total = len(scan_ids)
-        status = ("completed" if completed == total else
+        status = ("in_progress" if total == 0 else
+                  "completed" if completed == total else
                   "failed" if failed == total else "in_progress")
         out.append({
             "batch_id": bid,
@@ -196,7 +197,8 @@ async def batch_detail(
             "sbom_report_url": s.get("sbom_report_url"),
         })
     total = len(scan_ids)
-    status = ("completed" if completed == total else
+    status = ("in_progress" if total == 0 else
+              "completed" if completed == total else
               "failed" if failed == total else "in_progress")
     return {
         "batch_id": batch_id, "created_at": bh.get("created_at"),
