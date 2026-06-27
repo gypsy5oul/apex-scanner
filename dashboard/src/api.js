@@ -81,6 +81,12 @@ export const getReport = (scanId) => api.get(`/reports/${scanId}`);
 export const startBatchScan = (images) => api.post('/scan/batch', { images });
 export const getBatchStatus = (batchId) => api.get(`/scan/batch/${batchId}`);
 
+// Batch results (Phase 2)
+export const getBatches = (params = {}) => apiV2.get('/batches', { params });
+export const getBatchDetail = (batchId) => apiV2.get(`/batches/${batchId}`);
+export const getBatchPolicyCheck = (batchId, policyId) =>
+  apiV2.get(`/batches/${batchId}/policy-check`, { params: { policy_id: policyId } });
+
 // History endpoint
 export const getImageHistory = (imageName, limit = 20) =>
   api.get(`/history/${encodeURIComponent(imageName)}`, { params: { limit } });

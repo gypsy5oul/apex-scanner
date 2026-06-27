@@ -12,6 +12,8 @@ import Dashboard from './pages/Dashboard';
 import ScanPage from './pages/ScanPage';
 import ScanResults from './pages/ScanResults';
 import BatchScan from './pages/BatchScan';
+import Batches from './pages/Batches';
+import BatchDetail from './pages/BatchDetail';
 import History from './pages/History';
 import Compare from './pages/Compare';
 import Search from './pages/Search';
@@ -100,6 +102,8 @@ function AppRoutes() {
         <Route path="/scan" element={<ScanPage />} />
         <Route path="/scan/:scanId" element={<ScanResults />} />
         <Route path="/batch" element={<BatchScan />} />
+        <Route path="/batches" element={<Batches />} />
+        <Route path="/batches/:batchId" element={<BatchDetail />} />
         <Route path="/history" element={<History />} />
         <Route path="/iac-scan" element={<IacScan />} />
         <Route path="/approved-base-images" element={<ApprovedBaseImages />} />
