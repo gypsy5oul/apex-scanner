@@ -2218,8 +2218,9 @@ async def create_policy(
     description="List all security policies",
     tags=["policies"]
 )
-async def list_policies(_user: TokenData = Depends(get_current_admin)):
-    """List all security policies"""
+async def list_policies(_user: TokenData = Depends(get_current_user)):
+    """List all security policies (read-only; any authenticated user — needed
+    for the batch policy-gate. Policy create/update/delete remain admin-only)."""
     from app.policy_engine import policy_engine
 
     policies = policy_engine.list_policies()

@@ -117,3 +117,11 @@ def test_batch_policy_check_pending_for_noncompleted(client, mock_redis):
     res = client.get(f"/api/v2/batches/b-alice/policy-check?policy_id={pid}",
                      headers=_h("alice", "user")).json()
     assert res["results"][0]["passed"] is None
+
+
+def test_non_admin_can_list_policies(client, mock_redis):
+    # Non-admins must be able to READ policies to use the batch policy gate
+    # (create/update/delete stay admin-only).
+    r = client.get("/api/v2/policies", headers=_h("alice", "user"))
+    assert r.status_code == 200
+    assert "policies" in r.json()
