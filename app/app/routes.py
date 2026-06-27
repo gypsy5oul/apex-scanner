@@ -1089,22 +1089,19 @@ async def get_recent_scans(
     redis_client = get_redis_client()
 
     with LogContext(operation="get_recent_scans"):
-        # Get all history keys (using SCAN for performance)
-        history_keys = scan_redis_keys(redis_client, "history:*", count=200)
-
-        if not history_keys:
-            return {"scans": [], "total": 0}
-
-        # Pipeline 1: Get recent scan IDs from all history lists in batch
-        pipe = redis_client.pipeline()
-        for key in history_keys:
-            pipe.lrange(key, 0, 2)  # Get last 3 from each image
-        history_results = pipe.execute()
-
-        # Collect all scan IDs
-        all_scan_ids = []
-        for scan_ids in history_results:
-            all_scan_ids.extend(scan_ids)
+        if _user.role == "admin":
+            history_keys = scan_redis_keys(redis_client, "history:*", count=200)
+            if not history_keys:
+                return {"scans": [], "total": 0}
+            pipe = redis_client.pipeline()
+            for key in history_keys:
+                pipe.lrange(key, 0, 2)
+            history_results = pipe.execute()
+            all_scan_ids = []
+            for scan_ids in history_results:
+                all_scan_ids.extend(scan_ids)
+        else:
+            all_scan_ids = ownership.user_scan_ids(redis_client, _user.username, limit * 3)
 
         if not all_scan_ids:
             return {"scans": [], "total": 0}
@@ -1152,16 +1149,25 @@ async def get_stats(_user: TokenData = Depends(get_current_user)):
     """Get scanner statistics"""
     redis_client = get_redis_client()
 
-    # Distinct images = one history:* list per image name (all-time, stable).
-    unique_images = len(scan_redis_keys(redis_client, "history:*", count=200))
-
-    # Total scan RUNS = individual scan-record hashes still retained. Sourced
-    # from the same monitor the Workers page uses, so the two pages reconcile.
-    try:
-        from app.worker_monitor import get_monitor
-        total_scans = get_monitor().get_task_stats().get("total_scans", 0)
-    except Exception:
-        total_scans = 0
+    if _user.role == "admin":
+        unique_images = len(scan_redis_keys(redis_client, "history:*", count=200))
+        try:
+            from app.worker_monitor import get_monitor
+            total_scans = get_monitor().get_task_stats().get("total_scans", 0)
+        except Exception:
+            total_scans = 0
+    else:
+        ids = ownership.user_scan_ids(redis_client, _user.username)
+        total_scans = len(ids)
+        images = set()
+        if ids:
+            pipe = redis_client.pipeline()
+            for sid in ids:
+                pipe.hget(sid, "image_name")
+            for name in pipe.execute():
+                if name:
+                    images.add(name)
+        unique_images = len(images)
 
     return {
         "total_images_scanned": unique_images,

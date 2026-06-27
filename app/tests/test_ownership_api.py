@@ -70,3 +70,36 @@ def test_dedup_records_requesting_user(mock_task, client, mock_redis):
     assert resp.json()["scan_id"] == "existing-scan"
     # bob deduped onto an existing scan, but it must appear in bob's own list:
     assert "existing-scan" in ownership.user_scan_ids(mock_redis, "bob")
+
+
+def _seed_scan(r, scan_id, image, owner):
+    r.hset(scan_id, mapping={
+        "status": "completed", "image_name": image,
+        "critical": "1", "high": "2", "medium": "0", "low": "0",
+        "scan_timestamp": "2026-06-26T00:00:00+00:00",
+        ownership.OWNER_FIELD: owner,
+    })
+    r.lpush(f"history:{image}", scan_id)
+    ownership.record_scan_owner(r, scan_id, owner)
+
+
+def test_recent_scans_scoped_to_user(client, mock_redis):
+    _seed_scan(mock_redis, "s-alice", "img-a", "alice")
+    _seed_scan(mock_redis, "s-bob", "img-b", "bob")
+
+    alice = client.get("/api/v1/scans/recent", headers=_headers("alice", "user")).json()
+    ids = [s["scan_id"] for s in alice["scans"]]
+    assert "s-alice" in ids and "s-bob" not in ids
+
+    admin = client.get("/api/v1/scans/recent", headers=_headers("admin", "admin")).json()
+    admin_ids = [s["scan_id"] for s in admin["scans"]]
+    assert "s-alice" in admin_ids and "s-bob" in admin_ids
+
+
+def test_stats_scoped_to_user(client, mock_redis):
+    _seed_scan(mock_redis, "s-alice", "img-a", "alice")
+    _seed_scan(mock_redis, "s-bob", "img-b", "bob")
+
+    alice = client.get("/api/v1/stats", headers=_headers("alice", "user")).json()
+    assert alice["total_scans"] == 1
+    assert alice["total_images_scanned"] == 1
