@@ -475,6 +475,7 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
                         scan_id=existing_scan_id,
                         image=request.image_name
                     )
+                    ownership.record_scan_owner(redis_client, existing_scan_id, _user.username)
                     return ScanResponse(
                         scan_id=existing_scan_id,
                         status=ScanStatus.IN_PROGRESS,

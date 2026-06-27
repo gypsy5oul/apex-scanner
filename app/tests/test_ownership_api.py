@@ -48,6 +48,25 @@ def test_batch_scan_stamps_owner(mock_scan, mock_batch, client, mock_redis):
     body = resp.json()
     batch_id = body["batch_id"]
     assert batch_id in ownership.user_batch_ids(mock_redis, "alice")
+    assert mock_redis.hget(f"batch:{batch_id}", ownership.OWNER_FIELD) == "alice"
     for sid in body["scan_ids"]:
         assert mock_redis.hget(sid, ownership.OWNER_FIELD) == "alice"
         assert sid in ownership.user_scan_ids(mock_redis, "alice")
+
+
+@patch("app.routes.scan_image")
+def test_dedup_records_requesting_user(mock_task, client, mock_redis):
+    # An in-progress scan already exists for this image (created by someone else).
+    mock_redis.set("scan_dedup:nginx:1.0", "existing-scan")
+    mock_redis.hset("existing-scan", mapping={"status": "in_progress", "image_name": "nginx:1.0"})
+    mock_task.apply_async.return_value = MagicMock(id="t1")
+
+    resp = client.post(
+        "/api/v1/scan",
+        json={"image_name": "nginx:1.0", "skip_cache": True},
+        headers=_headers("bob", "user"),
+    )
+    assert resp.status_code == 202
+    assert resp.json()["scan_id"] == "existing-scan"
+    # bob deduped onto an existing scan, but it must appear in bob's own list:
+    assert "existing-scan" in ownership.user_scan_ids(mock_redis, "bob")
