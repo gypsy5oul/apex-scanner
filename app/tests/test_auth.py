@@ -211,3 +211,21 @@ class TestCookieConstants:
     def test_cookie_name_defined(self):
         """AUTH_COOKIE_NAME should be defined."""
         assert AUTH_COOKIE_NAME == "apex_token"
+
+
+class TestRoleDefaults:
+    """Tests for least-privilege role defaults."""
+
+    def test_api_key_carries_admin_role(self, mock_redis):
+        from app.auth import create_api_key, validate_api_key
+        resp = create_api_key("automation", expires_days=30)
+        td = validate_api_key(resp.key)
+        assert td is not None
+        assert td.role == "admin"
+        assert td.auth_method == "api_key"
+
+    def test_tokendata_role_defaults_to_user(self):
+        from app.auth import TokenData
+        from datetime import datetime
+        td = TokenData(username="x", exp=datetime.max)
+        assert td.role == "user"

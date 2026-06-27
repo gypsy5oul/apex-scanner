@@ -17,6 +17,7 @@ import redis
 from app.tasks import scan_image, batch_scan_images
 from app.config import settings, get_redis_client
 from app.auth import get_current_user, get_current_admin, TokenData
+from app import ownership
 from app.logging_config import get_logger, LogContext
 from app.metrics import (
     SCANS_TOTAL, SCANS_IN_PROGRESS, BATCH_SCANS_TOTAL, BATCH_SIZE,
@@ -474,6 +475,7 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
                         scan_id=existing_scan_id,
                         image=request.image_name
                     )
+                    ownership.record_scan_owner(redis_client, existing_scan_id, _user.username)
                     return ScanResponse(
                         scan_id=existing_scan_id,
                         status=ScanStatus.IN_PROGRESS,
@@ -503,9 +505,11 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
                 "total_packages": 0,
                 "report_url": "",
                 "sbom_urls": "{}",
-                "created_at": datetime.now(timezone.utc).isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                ownership.OWNER_FIELD: _user.username,
             })
             redis_client.expire(scan_id, settings.SCAN_RESULT_TTL)
+            ownership.record_scan_owner(redis_client, scan_id, _user.username)
 
             # Track in image history index
             history_key = f"history:{request.image_name}"
@@ -588,9 +592,11 @@ async def start_batch_scan(request: BatchScanRequest = Body(...), _user: TokenDa
                     "total_packages": 0,
                     "report_url": "",
                     "sbom_urls": "{}",
-                    "created_at": datetime.now(timezone.utc).isoformat()
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    ownership.OWNER_FIELD: _user.username,
                 })
                 redis_client.expire(scan_id, settings.SCAN_RESULT_TTL)
+                ownership.record_scan_owner(redis_client, scan_id, _user.username)
 
                 # Track in image history
                 history_key = f"history:{image_name}"
@@ -609,9 +615,11 @@ async def start_batch_scan(request: BatchScanRequest = Body(...), _user: TokenDa
                 "images": json.dumps(request.images),
                 "total_images": len(request.images),
                 "status": "in_progress",
-                "created_at": datetime.now(timezone.utc).isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                ownership.OWNER_FIELD: _user.username,
             })
             redis_client.expire(f"batch:{batch_id}", settings.SCAN_RESULT_TTL)
+            ownership.record_batch_owner(redis_client, batch_id, _user.username)
 
             # Update batch metrics
             BATCH_SCANS_TOTAL.inc()
@@ -942,9 +950,15 @@ async def get_image_history(
             pipe.hgetall(scan_id)
         scan_results = pipe.execute()
 
+        owned_ids = None
+        if _user.role != "admin":
+            owned_ids = set(ownership.user_scan_ids(redis_client, _user.username))
+
         history = []
         for scan_id, result in zip(scan_ids, scan_results):
             if result:
+                if owned_ids is not None and result.get(ownership.OWNER_FIELD) != _user.username and scan_id not in owned_ids:
+                    continue
                 history.append({
                     "scan_id": scan_id,
                     "image_name": result.get("image_name"),
@@ -1081,22 +1095,19 @@ async def get_recent_scans(
     redis_client = get_redis_client()
 
     with LogContext(operation="get_recent_scans"):
-        # Get all history keys (using SCAN for performance)
-        history_keys = scan_redis_keys(redis_client, "history:*", count=200)
-
-        if not history_keys:
-            return {"scans": [], "total": 0}
-
-        # Pipeline 1: Get recent scan IDs from all history lists in batch
-        pipe = redis_client.pipeline()
-        for key in history_keys:
-            pipe.lrange(key, 0, 2)  # Get last 3 from each image
-        history_results = pipe.execute()
-
-        # Collect all scan IDs
-        all_scan_ids = []
-        for scan_ids in history_results:
-            all_scan_ids.extend(scan_ids)
+        if _user.role == "admin":
+            history_keys = scan_redis_keys(redis_client, "history:*", count=200)
+            if not history_keys:
+                return {"scans": [], "total": 0}
+            pipe = redis_client.pipeline()
+            for key in history_keys:
+                pipe.lrange(key, 0, 2)
+            history_results = pipe.execute()
+            all_scan_ids = []
+            for scan_ids in history_results:
+                all_scan_ids.extend(scan_ids)
+        else:
+            all_scan_ids = ownership.user_scan_ids(redis_client, _user.username, limit * 3)
 
         if not all_scan_ids:
             return {"scans": [], "total": 0}
@@ -1144,16 +1155,25 @@ async def get_stats(_user: TokenData = Depends(get_current_user)):
     """Get scanner statistics"""
     redis_client = get_redis_client()
 
-    # Distinct images = one history:* list per image name (all-time, stable).
-    unique_images = len(scan_redis_keys(redis_client, "history:*", count=200))
-
-    # Total scan RUNS = individual scan-record hashes still retained. Sourced
-    # from the same monitor the Workers page uses, so the two pages reconcile.
-    try:
-        from app.worker_monitor import get_monitor
-        total_scans = get_monitor().get_task_stats().get("total_scans", 0)
-    except Exception:
-        total_scans = 0
+    if _user.role == "admin":
+        unique_images = len(scan_redis_keys(redis_client, "history:*", count=200))
+        try:
+            from app.worker_monitor import get_monitor
+            total_scans = get_monitor().get_task_stats().get("total_scans", 0)
+        except Exception:
+            total_scans = 0
+    else:
+        ids = ownership.user_scan_ids(redis_client, _user.username)
+        total_scans = len(ids)
+        images = set()
+        if ids:
+            pipe = redis_client.pipeline()
+            for sid in ids:
+                pipe.hget(sid, "image_name")
+            for name in pipe.execute():
+                if name:
+                    images.add(name)
+        unique_images = len(images)
 
     return {
         "total_images_scanned": unique_images,

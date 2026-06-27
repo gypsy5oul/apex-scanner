@@ -88,7 +88,7 @@ class TestGrypeParser:
         assert vuln["id"] == "N/A"
         assert vuln["severity"] == "Unknown"
         assert vuln["package_name"] == "Unknown"
-        assert vuln["cvss_score"] == "N/A"
+        assert vuln["cvss_score"] is None
 
 
 class TestTrivyParser:
@@ -127,7 +127,7 @@ class TestTrivyParser:
         result = self.scanner.parse_results(raw)
 
         openssl = result["vulnerabilities"][0]
-        assert openssl["cvss_score"] == "9.8"
+        assert openssl["cvss_score"] == 9.8
 
     def test_parse_cvss_missing(self, sample_trivy_output):
         """Missing CVSS should return N/A."""
@@ -135,7 +135,7 @@ class TestTrivyParser:
         result = self.scanner.parse_results(raw)
 
         libxml = result["vulnerabilities"][1]
-        assert libxml["cvss_score"] == "N/A"
+        assert libxml["cvss_score"] is None
 
     def test_parse_secret_fields(self, sample_trivy_output):
         """Parsed secrets should contain expected fields."""
@@ -180,13 +180,13 @@ class TestTrivyParser:
             }
         }
         score = self.scanner._extract_cvss(vuln)
-        assert score == "7.2"
+        assert score == 7.2
 
     def test_extract_cvss_non_dict(self):
         """Non-dict CVSS should return N/A."""
         vuln = {"CVSS": "not a dict"}
         score = self.scanner._extract_cvss(vuln)
-        assert score == "N/A"
+        assert score is None
 
 
 class TestOrchestratorDeduplication:

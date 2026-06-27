@@ -18,6 +18,7 @@ from app.scanner_errors import classify_scanner_errors, summarize_scan_failure
 from app.license_compliance import evaluate as evaluate_licenses, to_dict as licenses_to_dict
 from app.logging_config import get_logger, configure_logging, LogContext
 from app.trends import TrendAnalyzer
+from app import ownership
 from app.metrics import (
     SCANS_IN_PROGRESS, SCANS_COMPLETED, SCAN_DURATION,
     VULNERABILITIES_FOUND, SECRETS_FOUND, PACKAGES_FOUND,
@@ -1151,7 +1152,8 @@ def scan_base_images(self, batch_size: int = 5) -> Dict[str, Any]:
                 "status": "in_progress",
                 "image_name": image_name,
                 "created_at": now_iso(),
-                "scan_type": "base_image"
+                "scan_type": "base_image",
+                ownership.OWNER_FIELD: "system",
             })
             thread_redis.expire(scan_id, settings.SCAN_RESULT_TTL)
 
