@@ -17,6 +17,7 @@ import redis
 from app.tasks import scan_image, batch_scan_images
 from app.config import settings, get_redis_client
 from app.auth import get_current_user, get_current_admin, TokenData
+from app import ownership
 from app.logging_config import get_logger, LogContext
 from app.metrics import (
     SCANS_TOTAL, SCANS_IN_PROGRESS, BATCH_SCANS_TOTAL, BATCH_SIZE,
@@ -503,9 +504,11 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
                 "total_packages": 0,
                 "report_url": "",
                 "sbom_urls": "{}",
-                "created_at": datetime.now(timezone.utc).isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                ownership.OWNER_FIELD: _user.username,
             })
             redis_client.expire(scan_id, settings.SCAN_RESULT_TTL)
+            ownership.record_scan_owner(redis_client, scan_id, _user.username)
 
             # Track in image history index
             history_key = f"history:{request.image_name}"
@@ -588,9 +591,11 @@ async def start_batch_scan(request: BatchScanRequest = Body(...), _user: TokenDa
                     "total_packages": 0,
                     "report_url": "",
                     "sbom_urls": "{}",
-                    "created_at": datetime.now(timezone.utc).isoformat()
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    ownership.OWNER_FIELD: _user.username,
                 })
                 redis_client.expire(scan_id, settings.SCAN_RESULT_TTL)
+                ownership.record_scan_owner(redis_client, scan_id, _user.username)
 
                 # Track in image history
                 history_key = f"history:{image_name}"
@@ -609,9 +614,11 @@ async def start_batch_scan(request: BatchScanRequest = Body(...), _user: TokenDa
                 "images": json.dumps(request.images),
                 "total_images": len(request.images),
                 "status": "in_progress",
-                "created_at": datetime.now(timezone.utc).isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                ownership.OWNER_FIELD: _user.username,
             })
             redis_client.expire(f"batch:{batch_id}", settings.SCAN_RESULT_TTL)
+            ownership.record_batch_owner(redis_client, batch_id, _user.username)
 
             # Update batch metrics
             BATCH_SCANS_TOTAL.inc()
