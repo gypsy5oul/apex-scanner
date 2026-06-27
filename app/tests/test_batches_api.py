@@ -1,0 +1,127 @@
+import json
+from unittest.mock import patch
+import pytest
+from fastapi.testclient import TestClient
+from app.main import app
+from app.auth import create_access_token
+from app import ownership
+import app.routes_v2 as _routes_v2_mod
+
+
+@pytest.fixture
+def client(mock_redis):
+    # routes_v2 captures its own get_redis_client reference at import time;
+    # patch it here so the route handler sees the same fakeredis as the test.
+    _routes_v2_mod.get_redis_client = lambda: mock_redis
+    return TestClient(app)
+
+
+def _h(u, r):
+    t, _ = create_access_token(u, r)
+    return {"Authorization": f"Bearer {t}"}
+
+
+def _seed_batch(r, batch_id, owner, scans):
+    # scans: list of (scan_id, image, status, crit, high, med, low)
+    scan_ids = [s[0] for s in scans]
+    for sid, img, st, c, h, m, l in scans:
+        r.hset(sid, mapping={"status": st, "image_name": img, "created_by": owner,
+                             "critical": c, "high": h, "medium": m, "low": l,
+                             "report_url": f"https://edge/reports/{sid}.html",
+                             "sbom_report_url": f"https://edge/reports/{sid}_sbom.html"})
+        ownership.record_scan_owner(r, sid, owner)
+    r.hset(f"batch:{batch_id}", mapping={
+        "scan_ids": json.dumps(scan_ids), "images": json.dumps([s[1] for s in scans]),
+        "total_images": len(scans), "status": "in_progress",
+        "created_at": "2026-06-27T00:00:00+00:00", "created_by": owner})
+    ownership.record_batch_owner(r, batch_id, owner)
+    r.zadd("recent_batches", {batch_id: 1})
+
+
+def test_batch_detail_enriched_and_owner_gated(client, mock_redis):
+    _seed_batch(mock_redis, "b-alice", "alice",
+                [("sa", "img-a", "completed", 1, 2, 3, 4),
+                 ("sa2", "img-a2", "failed", 0, 0, 0, 0)])
+
+    d = client.get("/api/v2/batches/b-alice", headers=_h("alice", "user")).json()
+    assert d["total_images"] == 2 and d["completed"] == 1 and d["failed"] == 1
+    assert d["totals"]["critical"] == 1 and d["totals"]["medium"] == 3
+    img = next(i for i in d["images"] if i["scan_id"] == "sa")
+    assert img["report_url"].endswith("sa.html") and img["high"] == 2
+
+    assert client.get("/api/v2/batches/b-alice", headers=_h("bob", "user")).status_code == 404
+    assert client.get("/api/v2/batches/b-alice", headers=_h("admin", "admin")).status_code == 200
+
+
+def test_batches_list_scoped_to_user(client, mock_redis):
+    _seed_batch(mock_redis, "b-alice", "alice", [("sa", "img-a", "completed", 1, 2, 0, 0)])
+    _seed_batch(mock_redis, "b-bob", "bob", [("sb", "img-b", "completed", 0, 0, 1, 0)])
+
+    alice = client.get("/api/v2/batches", headers=_h("alice", "user")).json()
+    ids = [b["batch_id"] for b in alice["batches"]]
+    assert "b-alice" in ids and "b-bob" not in ids
+    assert alice["batches"][0]["total_images"] == 1
+    assert alice["batches"][0]["completed"] == 1
+
+    admin = client.get("/api/v2/batches", headers=_h("admin", "admin")).json()
+    admin_ids = [b["batch_id"] for b in admin["batches"]]
+    assert "b-alice" in admin_ids and "b-bob" in admin_ids
+
+
+def test_batch_policy_check(client, mock_redis):
+    from app.policy_engine import PolicyEngine
+    pe = PolicyEngine()
+    pol = pe.create_policy(name="no-critical", description="",
+                           rules=[{"field": "severity", "operator": "equals",
+                                   "value": "CRITICAL", "action": "fail"}])
+    pid = pol.id if hasattr(pol, "id") else pol["id"]
+
+    _seed_batch(mock_redis, "b-alice", "alice",
+                [("sa", "img-a", "completed", 1, 0, 0, 0),
+                 ("sb", "img-b", "completed", 0, 0, 1, 0)])
+    mock_redis.set("vulns:sa", json.dumps([{"id": "CVE-1", "severity": "CRITICAL"}]))
+    mock_redis.set("vulns:sb", json.dumps([{"id": "CVE-2", "severity": "MEDIUM"}]))
+
+    res = client.get(f"/api/v2/batches/b-alice/policy-check?policy_id={pid}",
+                     headers=_h("alice", "user")).json()
+    by = {x["scan_id"]: x for x in res["results"]}
+    assert by["sa"]["passed"] is False
+    assert by["sb"]["passed"] is True
+
+
+def test_batch_policy_check_owner_gated(client, mock_redis):
+    from app.policy_engine import PolicyEngine
+    pe = PolicyEngine()
+    pol = pe.create_policy(name="p1", description="",
+                           rules=[{"field": "severity", "operator": "equals",
+                                   "value": "CRITICAL", "action": "fail"}])
+    pid = pol.id if hasattr(pol, "id") else pol["id"]
+    _seed_batch(mock_redis, "b-alice", "alice", [("sa", "img-a", "completed", 0, 0, 0, 0)])
+    # bob (non-admin) must NOT be able to policy-check alice's batch
+    assert client.get(f"/api/v2/batches/b-alice/policy-check?policy_id={pid}",
+                      headers=_h("bob", "user")).status_code == 404
+    # admin can
+    assert client.get(f"/api/v2/batches/b-alice/policy-check?policy_id={pid}",
+                      headers=_h("admin", "admin")).status_code == 200
+
+
+def test_batch_policy_check_pending_for_noncompleted(client, mock_redis):
+    from app.policy_engine import PolicyEngine
+    pe = PolicyEngine()
+    pol = pe.create_policy(name="p2", description="",
+                           rules=[{"field": "severity", "operator": "equals",
+                                   "value": "CRITICAL", "action": "fail"}])
+    pid = pol.id if hasattr(pol, "id") else pol["id"]
+    _seed_batch(mock_redis, "b-alice", "alice",
+                [("sc", "img-c", "in_progress", 0, 0, 0, 0)])
+    res = client.get(f"/api/v2/batches/b-alice/policy-check?policy_id={pid}",
+                     headers=_h("alice", "user")).json()
+    assert res["results"][0]["passed"] is None
+
+
+def test_non_admin_can_list_policies(client, mock_redis):
+    # Non-admins must be able to READ policies to use the batch policy gate
+    # (create/update/delete stay admin-only).
+    r = client.get("/api/v2/policies", headers=_h("alice", "user"))
+    assert r.status_code == 200
+    assert "policies" in r.json()

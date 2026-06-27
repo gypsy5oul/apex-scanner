@@ -16,6 +16,7 @@ import {
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import ScannerIcon from '@mui/icons-material/DocumentScanner';
 import BatchIcon from '@mui/icons-material/ViewList';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
 import HistoryIcon from '@mui/icons-material/History';
 import CompareIcon from '@mui/icons-material/Compare';
 import BugReportIcon from '@mui/icons-material/BugReport';
@@ -38,6 +39,7 @@ const mainMenuItems = [
   { text: 'New Scan', icon: <ScannerIcon />, path: '/scan' },
   { text: 'IaC Scan', icon: <SecurityIcon />, path: '/iac-scan' },
   { text: 'Batch Scan', icon: <BatchIcon />, path: '/batch' },
+  { text: 'Batch Results', icon: <FactCheckIcon />, path: '/batches' },
   { text: 'Scan History', icon: <HistoryIcon />, path: '/history' },
   { text: 'Approved Base Images', icon: <VerifiedIcon />, path: '/approved-base-images' },
 ];

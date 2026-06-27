@@ -21,7 +21,7 @@ from app.auth import (
     set_auth_cookie, clear_auth_cookie, create_access_token,
     COOKIE_SECURE,
 )
-from app import oidc
+from app import oidc, ownership
 from app.logging_config import get_logger
 from app.scheduler import ScheduleManager, GoogleChatNotifier
 from app.base_image_tracker import BaseImageTracker
@@ -117,6 +117,134 @@ async def verify_auth(current_user: TokenData = Depends(get_current_user)):
         "role": current_user.role,
         "expires": current_user.exp.isoformat()
     }
+
+
+@router_v2.get("/batches", summary="List batch scans")
+async def list_batches(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _user: TokenData = Depends(get_current_user),
+):
+    r = get_redis_client()
+    if _user.role == "admin":
+        batch_ids = r.zrevrange("recent_batches", 0, -1)
+    else:
+        batch_ids = ownership.user_batch_ids(r, _user.username)
+
+    out = []
+    for bid in batch_ids:
+        bh = r.hgetall(f"batch:{bid}")
+        if not bh:
+            continue
+        scan_ids = json.loads(bh.get("scan_ids", "[]"))
+        completed = failed = in_progress = 0
+        for sid in scan_ids:
+            st = r.hget(sid, "status")
+            if st == "completed":
+                completed += 1
+            elif st == "failed":
+                failed += 1
+            elif st:
+                in_progress += 1
+        total = len(scan_ids)
+        status = ("in_progress" if total == 0 else
+                  "completed" if completed == total else
+                  "failed" if failed == total else "in_progress")
+        out.append({
+            "batch_id": bid,
+            "created_at": bh.get("created_at"),
+            "total_images": total,
+            "completed": completed,
+            "failed": failed,
+            "in_progress": in_progress,
+            "status": status,
+        })
+    return {"total": len(out), "batches": out[offset:offset + limit]}
+
+
+@router_v2.get("/batches/{batch_id}", summary="Batch detail")
+async def batch_detail(
+    batch_id: str = Path(...),
+    _user: TokenData = Depends(get_current_user),
+):
+    r = get_redis_client()
+    bh = r.hgetall(f"batch:{batch_id}")
+    if not bh:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    if _user.role != "admin" and bh.get(ownership.OWNER_FIELD) != _user.username:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    scan_ids = json.loads(bh.get("scan_ids", "[]"))
+    images, totals = [], {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    completed = failed = in_progress = 0
+    for sid in scan_ids:
+        s = r.hgetall(sid)
+        if not s:
+            continue
+        st = s.get("status", "unknown")
+        if st == "completed":
+            completed += 1
+        elif st == "failed":
+            failed += 1
+        else:
+            in_progress += 1
+        sev = {k: int(s.get(k, 0) or 0) for k in ("critical", "high", "medium", "low")}
+        for k in totals:
+            totals[k] += sev[k]
+        images.append({
+            "scan_id": sid, "image_name": s.get("image_name"), "status": st,
+            **sev, "report_url": s.get("report_url"),
+            "sbom_report_url": s.get("sbom_report_url"),
+        })
+    total = len(scan_ids)
+    status = ("in_progress" if total == 0 else
+              "completed" if completed == total else
+              "failed" if failed == total else "in_progress")
+    return {
+        "batch_id": batch_id, "created_at": bh.get("created_at"),
+        "created_by": bh.get(ownership.OWNER_FIELD),
+        "total_images": total, "completed": completed, "failed": failed,
+        "in_progress": in_progress, "status": status,
+        "totals": totals, "images": images,
+    }
+
+
+@router_v2.get("/batches/{batch_id}/policy-check", summary="Batch policy gate")
+async def batch_policy_check(
+    batch_id: str = Path(...),
+    policy_id: str = Query(...),
+    _user: TokenData = Depends(get_current_user),
+):
+    r = get_redis_client()
+    bh = r.hgetall(f"batch:{batch_id}")
+    if not bh:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    if _user.role != "admin" and bh.get(ownership.OWNER_FIELD) != _user.username:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    from app.policy_engine import PolicyEngine
+    pe = PolicyEngine()
+    policy = pe.get_policy(policy_id)
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+
+    results = []
+    for sid in json.loads(bh.get("scan_ids", "[]")):
+        s = r.hgetall(sid)
+        image_name = s.get("image_name") if s else None
+        if not s or s.get("status") != "completed":
+            results.append({"scan_id": sid, "image_name": image_name,
+                            "passed": None, "fail": 0, "warn": 0})
+            continue
+        raw = r.get(f"vulns:{sid}")
+        vulns = json.loads(raw) if raw else []
+        ev = pe.evaluate_vulnerabilities(policy_id, vulns)
+        results.append({
+            "scan_id": sid, "image_name": image_name,
+            "passed": ev.passed, "fail": ev.summary.get("fail", 0),
+            "warn": ev.summary.get("warn", 0),
+        })
+    return {"policy_id": policy_id, "policy_name": policy.name, "results": results}
 
 
 @router_v2.get(
@@ -2090,8 +2218,9 @@ async def create_policy(
     description="List all security policies",
     tags=["policies"]
 )
-async def list_policies(_user: TokenData = Depends(get_current_admin)):
-    """List all security policies"""
+async def list_policies(_user: TokenData = Depends(get_current_user)):
+    """List all security policies (read-only; any authenticated user — needed
+    for the batch policy-gate. Policy create/update/delete remain admin-only)."""
     from app.policy_engine import policy_engine
 
     policies = policy_engine.list_policies()
