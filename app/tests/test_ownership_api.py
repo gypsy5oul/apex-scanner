@@ -110,6 +110,23 @@ def test_history_scoped_to_user(client, mock_redis):
     assert admin_ids == ["h-alice", "h-bob"]
 
 
+def test_system_scan_hidden_from_non_admin_visible_to_admin(client, mock_redis):
+    # Mirror a base-image scan: in history, created_by="system", and NOT added
+    # to any per-user index (tasks.py deliberately does not call record_scan_owner).
+    mock_redis.hset("sys-scan", mapping={
+        "status": "completed", "image_name": "base-img", "created_by": "system",
+        "scan_timestamp": "2026-06-26T00:00:00+00:00",
+        "critical": "0", "high": "0", "medium": "0", "low": "0",
+    })
+    mock_redis.lpush("history:base-img", "sys-scan")
+
+    alice = client.get("/api/v1/scans/recent", headers=_headers("alice", "user")).json()
+    assert "sys-scan" not in [s["scan_id"] for s in alice["scans"]]
+
+    admin = client.get("/api/v1/scans/recent", headers=_headers("admin", "admin")).json()
+    assert "sys-scan" in [s["scan_id"] for s in admin["scans"]]
+
+
 def test_stats_scoped_to_user(client, mock_redis):
     _seed_scan(mock_redis, "s-alice", "img-a", "alice")
     _seed_scan(mock_redis, "s-bob", "img-b", "bob")

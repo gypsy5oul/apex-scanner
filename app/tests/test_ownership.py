@@ -37,10 +37,11 @@ def test_record_batch_owner_separate_index():
     assert ownership.user_scan_ids(r, "alice") == []
 
 
-def test_system_scans_invisible_to_users():
-    # A scan owned by "system" must not appear in any human's per-user index.
+def test_system_namespace_isolated_from_human_users():
+    # Even if a scan were indexed under the "system" owner, no human user's
+    # per-user index includes it — system scans are admin-only.
     r = _r()
-    r.hset("sys-scan", mapping={"status": "completed", "created_by": "system"})
-    # base-image scans are intentionally NOT indexed per-user:
-    assert ownership.user_scan_ids(r, "system") == []
+    ownership.record_scan_owner(r, "sys-scan", "system", ts=1)
+    assert ownership.user_scan_ids(r, "system") == ["sys-scan"]
     assert ownership.user_scan_ids(r, "alice") == []
+    assert ownership.user_scan_ids(r, "bob") == []
