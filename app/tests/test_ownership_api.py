@@ -96,6 +96,20 @@ def test_recent_scans_scoped_to_user(client, mock_redis):
     assert "s-alice" in admin_ids and "s-bob" in admin_ids
 
 
+def test_history_scoped_to_user(client, mock_redis):
+    # Two users scanned the SAME image.
+    _seed_scan(mock_redis, "h-alice", "shared-img", "alice")
+    _seed_scan(mock_redis, "h-bob", "shared-img", "bob")
+
+    alice = client.get("/api/v1/history/shared-img", headers=_headers("alice", "user")).json()
+    ids = [h["scan_id"] for h in alice["history"]]
+    assert ids == ["h-alice"]
+
+    admin = client.get("/api/v1/history/shared-img", headers=_headers("admin", "admin")).json()
+    admin_ids = sorted(h["scan_id"] for h in admin["history"])
+    assert admin_ids == ["h-alice", "h-bob"]
+
+
 def test_stats_scoped_to_user(client, mock_redis):
     _seed_scan(mock_redis, "s-alice", "img-a", "alice")
     _seed_scan(mock_redis, "s-bob", "img-b", "bob")

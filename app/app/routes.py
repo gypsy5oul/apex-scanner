@@ -953,6 +953,8 @@ async def get_image_history(
         history = []
         for scan_id, result in zip(scan_ids, scan_results):
             if result:
+                if _user.role != "admin" and result.get(ownership.OWNER_FIELD) != _user.username:
+                    continue
                 history.append({
                     "scan_id": scan_id,
                     "image_name": result.get("image_name"),
