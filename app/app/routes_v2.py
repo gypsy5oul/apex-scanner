@@ -207,6 +207,44 @@ async def batch_detail(
     }
 
 
+@router_v2.get("/batches/{batch_id}/policy-check", summary="Batch policy gate")
+async def batch_policy_check(
+    batch_id: str = Path(...),
+    policy_id: str = Query(...),
+    _user: TokenData = Depends(get_current_user),
+):
+    r = get_redis_client()
+    bh = r.hgetall(f"batch:{batch_id}")
+    if not bh:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    if _user.role != "admin" and bh.get(ownership.OWNER_FIELD) != _user.username:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    from app.policy_engine import PolicyEngine
+    pe = PolicyEngine()
+    policy = pe.get_policy(policy_id)
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+
+    results = []
+    for sid in json.loads(bh.get("scan_ids", "[]")):
+        s = r.hgetall(sid)
+        image_name = s.get("image_name") if s else None
+        if not s or s.get("status") != "completed":
+            results.append({"scan_id": sid, "image_name": image_name,
+                            "passed": None, "fail": 0, "warn": 0})
+            continue
+        raw = r.get(f"vulns:{sid}")
+        vulns = json.loads(raw) if raw else []
+        ev = pe.evaluate_vulnerabilities(policy_id, vulns)
+        results.append({
+            "scan_id": sid, "image_name": image_name,
+            "passed": ev.passed, "fail": ev.summary.get("fail", 0),
+            "warn": ev.summary.get("warn", 0),
+        })
+    return {"policy_id": policy_id, "policy_name": policy.name, "results": results}
+
+
 @router_v2.get(
     "/auth/status",
     summary="Auth Status",

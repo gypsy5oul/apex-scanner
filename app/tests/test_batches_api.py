@@ -66,3 +66,24 @@ def test_batches_list_scoped_to_user(client, mock_redis):
     admin = client.get("/api/v2/batches", headers=_h("admin", "admin")).json()
     admin_ids = [b["batch_id"] for b in admin["batches"]]
     assert "b-alice" in admin_ids and "b-bob" in admin_ids
+
+
+def test_batch_policy_check(client, mock_redis):
+    from app.policy_engine import PolicyEngine
+    pe = PolicyEngine()
+    pol = pe.create_policy(name="no-critical", description="",
+                           rules=[{"field": "severity", "operator": "equals",
+                                   "value": "CRITICAL", "action": "fail"}])
+    pid = pol.id if hasattr(pol, "id") else pol["id"]
+
+    _seed_batch(mock_redis, "b-alice", "alice",
+                [("sa", "img-a", "completed", 1, 0, 0, 0),
+                 ("sb", "img-b", "completed", 0, 0, 1, 0)])
+    mock_redis.set("vulns:sa", json.dumps([{"id": "CVE-1", "severity": "CRITICAL"}]))
+    mock_redis.set("vulns:sb", json.dumps([{"id": "CVE-2", "severity": "MEDIUM"}]))
+
+    res = client.get(f"/api/v2/batches/b-alice/policy-check?policy_id={pid}",
+                     headers=_h("alice", "user")).json()
+    by = {x["scan_id"]: x for x in res["results"]}
+    assert by["sa"]["passed"] is False
+    assert by["sb"]["passed"] is True
