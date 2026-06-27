@@ -620,6 +620,7 @@ async def start_batch_scan(request: BatchScanRequest = Body(...), _user: TokenDa
             })
             redis_client.expire(f"batch:{batch_id}", settings.SCAN_RESULT_TTL)
             ownership.record_batch_owner(redis_client, batch_id, _user.username)
+            redis_client.zadd("recent_batches", {batch_id: datetime.now(timezone.utc).timestamp()})
 
             # Update batch metrics
             BATCH_SCANS_TOTAL.inc()

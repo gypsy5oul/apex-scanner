@@ -21,7 +21,7 @@ from app.auth import (
     set_auth_cookie, clear_auth_cookie, create_access_token,
     COOKIE_SECURE,
 )
-from app import oidc
+from app import oidc, ownership
 from app.logging_config import get_logger
 from app.scheduler import ScheduleManager, GoogleChatNotifier
 from app.base_image_tracker import BaseImageTracker
@@ -117,6 +117,48 @@ async def verify_auth(current_user: TokenData = Depends(get_current_user)):
         "role": current_user.role,
         "expires": current_user.exp.isoformat()
     }
+
+
+@router_v2.get("/batches", summary="List batch scans")
+async def list_batches(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _user: TokenData = Depends(get_current_user),
+):
+    r = get_redis_client()
+    if _user.role == "admin":
+        batch_ids = r.zrevrange("recent_batches", 0, -1)
+    else:
+        batch_ids = ownership.user_batch_ids(r, _user.username)
+
+    out = []
+    for bid in batch_ids:
+        bh = r.hgetall(f"batch:{bid}")
+        if not bh:
+            continue
+        scan_ids = json.loads(bh.get("scan_ids", "[]"))
+        completed = failed = in_progress = 0
+        for sid in scan_ids:
+            st = r.hget(sid, "status")
+            if st == "completed":
+                completed += 1
+            elif st == "failed":
+                failed += 1
+            elif st:
+                in_progress += 1
+        total = len(scan_ids)
+        status = ("completed" if completed == total else
+                  "failed" if failed == total else "in_progress")
+        out.append({
+            "batch_id": bid,
+            "created_at": bh.get("created_at"),
+            "total_images": total,
+            "completed": completed,
+            "failed": failed,
+            "in_progress": in_progress,
+            "status": status,
+        })
+    return {"total": len(out), "batches": out[offset:offset + limit]}
 
 
 @router_v2.get(
