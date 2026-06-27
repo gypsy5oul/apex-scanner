@@ -61,7 +61,7 @@ class LoginResponse(BaseModel):
 class TokenData(BaseModel):
     """Decoded token data"""
     username: str
-    role: str = "admin"
+    role: str = "user"
     exp: datetime
     auth_method: str = "jwt"
 
@@ -240,7 +240,7 @@ def verify_token(token: str) -> Optional[TokenData]:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         username = payload.get("sub")
         exp = datetime.fromtimestamp(payload.get("exp"))
-        role = payload.get("role", "admin")  # Default "admin" for backward compat
+        role = payload.get("role", "user")  # Default "user" for least-privilege
 
         if username is None:
             return None
@@ -274,6 +274,7 @@ def create_api_key(name: str, expires_days: Optional[int] = 365) -> APIKeyRespon
         "key_hash": key_hash,
         "created_at": now.isoformat(),
         "created_by": settings.ADMIN_USERNAME,
+        "role": "admin",
     }
 
     expires_at = None
@@ -326,6 +327,7 @@ def validate_api_key(raw_key: str) -> Optional[TokenData]:
 
     return TokenData(
         username=key_data.get("created_by", "api_key"),
+        role=key_data.get("role", "admin"),
         exp=datetime.fromisoformat(expires_at) if expires_at else datetime.max,
         auth_method="api_key",
     )

@@ -127,6 +127,14 @@ def test_system_scan_hidden_from_non_admin_visible_to_admin(client, mock_redis):
     assert "sys-scan" in [s["scan_id"] for s in admin["scans"]]
 
 
+def test_history_includes_deduped_scan_via_index(client, mock_redis):
+    # alice created the scan; bob deduped onto it (bob indexed it, created_by stays alice)
+    _seed_scan(mock_redis, "d-scan", "dedup-img", "alice")
+    ownership.record_scan_owner(mock_redis, "d-scan", "bob")
+    bob = client.get("/api/v1/history/dedup-img", headers=_headers("bob", "user")).json()
+    assert "d-scan" in [h["scan_id"] for h in bob["history"]]
+
+
 def test_stats_scoped_to_user(client, mock_redis):
     _seed_scan(mock_redis, "s-alice", "img-a", "alice")
     _seed_scan(mock_redis, "s-bob", "img-b", "bob")

@@ -950,10 +950,14 @@ async def get_image_history(
             pipe.hgetall(scan_id)
         scan_results = pipe.execute()
 
+        owned_ids = None
+        if _user.role != "admin":
+            owned_ids = set(ownership.user_scan_ids(redis_client, _user.username))
+
         history = []
         for scan_id, result in zip(scan_ids, scan_results):
             if result:
-                if _user.role != "admin" and result.get(ownership.OWNER_FIELD) != _user.username:
+                if owned_ids is not None and result.get(ownership.OWNER_FIELD) != _user.username and scan_id not in owned_ids:
                     continue
                 history.append({
                     "scan_id": scan_id,
