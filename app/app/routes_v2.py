@@ -161,6 +161,52 @@ async def list_batches(
     return {"total": len(out), "batches": out[offset:offset + limit]}
 
 
+@router_v2.get("/batches/{batch_id}", summary="Batch detail")
+async def batch_detail(
+    batch_id: str = Path(...),
+    _user: TokenData = Depends(get_current_user),
+):
+    r = get_redis_client()
+    bh = r.hgetall(f"batch:{batch_id}")
+    if not bh:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    if _user.role != "admin" and bh.get(ownership.OWNER_FIELD) != _user.username:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    scan_ids = json.loads(bh.get("scan_ids", "[]"))
+    images, totals = [], {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    completed = failed = in_progress = 0
+    for sid in scan_ids:
+        s = r.hgetall(sid)
+        if not s:
+            continue
+        st = s.get("status", "unknown")
+        if st == "completed":
+            completed += 1
+        elif st == "failed":
+            failed += 1
+        else:
+            in_progress += 1
+        sev = {k: int(s.get(k, 0) or 0) for k in ("critical", "high", "medium", "low")}
+        for k in totals:
+            totals[k] += sev[k]
+        images.append({
+            "scan_id": sid, "image_name": s.get("image_name"), "status": st,
+            **sev, "report_url": s.get("report_url"),
+            "sbom_report_url": s.get("sbom_report_url"),
+        })
+    total = len(scan_ids)
+    status = ("completed" if completed == total else
+              "failed" if failed == total else "in_progress")
+    return {
+        "batch_id": batch_id, "created_at": bh.get("created_at"),
+        "created_by": bh.get(ownership.OWNER_FIELD),
+        "total_images": total, "completed": completed, "failed": failed,
+        "in_progress": in_progress, "status": status,
+        "totals": totals, "images": images,
+    }
+
+
 @router_v2.get(
     "/auth/status",
     summary="Auth Status",

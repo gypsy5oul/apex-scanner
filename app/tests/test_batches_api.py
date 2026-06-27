@@ -38,6 +38,21 @@ def _seed_batch(r, batch_id, owner, scans):
     r.zadd("recent_batches", {batch_id: 1})
 
 
+def test_batch_detail_enriched_and_owner_gated(client, mock_redis):
+    _seed_batch(mock_redis, "b-alice", "alice",
+                [("sa", "img-a", "completed", 1, 2, 3, 4),
+                 ("sa2", "img-a2", "failed", 0, 0, 0, 0)])
+
+    d = client.get("/api/v2/batches/b-alice", headers=_h("alice", "user")).json()
+    assert d["total_images"] == 2 and d["completed"] == 1 and d["failed"] == 1
+    assert d["totals"]["critical"] == 1 and d["totals"]["medium"] == 3
+    img = next(i for i in d["images"] if i["scan_id"] == "sa")
+    assert img["report_url"].endswith("sa.html") and img["high"] == 2
+
+    assert client.get("/api/v2/batches/b-alice", headers=_h("bob", "user")).status_code == 404
+    assert client.get("/api/v2/batches/b-alice", headers=_h("admin", "admin")).status_code == 200
+
+
 def test_batches_list_scoped_to_user(client, mock_redis):
     _seed_batch(mock_redis, "b-alice", "alice", [("sa", "img-a", "completed", 1, 2, 0, 0)])
     _seed_batch(mock_redis, "b-bob", "bob", [("sb", "img-b", "completed", 0, 0, 1, 0)])
