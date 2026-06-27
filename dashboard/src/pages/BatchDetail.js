@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -33,7 +33,7 @@ import PageHeader from '../components/PageHeader';
 import SeverityChip from '../components/SeverityChip';
 import { TableSkeleton } from '../components/LoadingSkeletons';
 import { useToast } from '../components/Feedback';
-import { getBatchDetail, getBatchPolicyCheck, startBatchScan, apiV2 } from '../api';
+import { getBatchDetail, getBatchPolicyCheck, startBatchScan, getPolicies } from '../api';
 import { MONO_FONT, getSeverity } from '../theme/tokens';
 
 const STATUS = {
@@ -61,8 +61,6 @@ function BatchDetail() {
   const [policyId, setPolicyId] = useState('');
   const [gate, setGate] = useState(null); // { scan_id: {passed, fail} }
 
-  const pollRef = useRef(null);
-
   const fetchDetail = useCallback(async () => {
     try {
       const res = await getBatchDetail(batchId);
@@ -76,24 +74,22 @@ function BatchDetail() {
     }
   }, [batchId, toast]);
 
-  // Initial load + load policies
+  // Initial load + resilient poll loop: keeps polling on transient errors
+  // (a failed fetch must NOT freeze the live view) and stops once terminal.
   useEffect(() => {
-    fetchDetail();
-    apiV2.get('/policies').then((r) => setPolicies(r.data.policies || [])).catch(() => {});
+    let timer;
+    let cancelled = false;
+    const tick = async () => {
+      const fresh = await fetchDetail();
+      if (cancelled) return;
+      if (!fresh || !TERMINAL.has(fresh.status)) {
+        timer = setTimeout(tick, 5000);
+      }
+    };
+    tick();
+    getPolicies().then((r) => setPolicies(r.data.policies || [])).catch(() => {});
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [fetchDetail]);
-
-  // Poll while not terminal
-  useEffect(() => {
-    if (data && !TERMINAL.has(data.status)) {
-      pollRef.current = setTimeout(async () => {
-        const fresh = await fetchDetail();
-        if (fresh && TERMINAL.has(fresh.status) && pollRef.current) {
-          clearTimeout(pollRef.current);
-        }
-      }, 5000);
-    }
-    return () => { if (pollRef.current) clearTimeout(pollRef.current); };
-  }, [data, fetchDetail]);
 
   const runPolicyCheck = async (pid) => {
     setPolicyId(pid);
@@ -129,8 +125,11 @@ function BatchDetail() {
     const csv = rows.map((r) => r.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     const a = document.createElement('a');
-    a.href = url; a.download = `batch-${batchId.slice(0, 8)}.csv`; a.click();
-    URL.revokeObjectURL(url);
+    a.href = url; a.download = `batch-${batchId.slice(0, 8)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   if (loading) {
@@ -151,7 +150,7 @@ function BatchDetail() {
   return (
     <Box>
       <PageHeader
-        title={`Batch ${batchId.slice(0, 8)}`}
+        title={<>Batch <Box component="span" sx={{ fontFamily: MONO_FONT }}>{batchId.slice(0, 8)}</Box></>}
         description={data.created_at ? `Created ${new Date(data.created_at).toLocaleString()}` : ''}
         actions={
           <Tooltip title="Refresh">
@@ -170,10 +169,10 @@ function BatchDetail() {
             {data.completed}/{data.total_images} completed{data.failed > 0 ? ` · ${data.failed} failed` : ''}
           </Typography>
           <Box sx={{ flexGrow: 1 }} />
-          <SeverityChip severity="critical" count={data.totals.critical} />
-          <SeverityChip severity="high" count={data.totals.high} />
-          <SeverityChip severity="medium" count={data.totals.medium} />
-          <SeverityChip severity="low" count={data.totals.low} />
+          <SeverityChip severity="critical" count={data.totals?.critical ?? 0} />
+          <SeverityChip severity="high" count={data.totals?.high ?? 0} />
+          <SeverityChip severity="medium" count={data.totals?.medium ?? 0} />
+          <SeverityChip severity="low" count={data.totals?.low ?? 0} />
         </Stack>
         {isRunning && <LinearProgress variant="determinate" value={pct} sx={{ height: 6, borderRadius: 3 }} />}
       </Paper>
@@ -217,7 +216,9 @@ function BatchDetail() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {(data.images || []).map((i) => {
+            {(data.images || []).length === 0 ? (
+              <TableRow><TableCell colSpan={policyId ? 7 : 6} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>No images in this batch.</TableCell></TableRow>
+            ) : (data.images || []).map((i) => {
               const g = gate && gate[i.scan_id];
               return (
                 <TableRow key={i.scan_id} hover>

@@ -86,6 +86,7 @@ export const getBatches = (params = {}) => apiV2.get('/batches', { params });
 export const getBatchDetail = (batchId) => apiV2.get(`/batches/${batchId}`);
 export const getBatchPolicyCheck = (batchId, policyId) =>
   apiV2.get(`/batches/${batchId}/policy-check`, { params: { policy_id: policyId } });
+export const getPolicies = () => apiV2.get('/policies');
 
 // History endpoint
 export const getImageHistory = (imageName, limit = 20) =>

@@ -121,9 +121,9 @@ function Batches() {
                       <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{b.total_images}</TableCell>
                       <TableCell>
                         <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                          {b.completed}/{b.total_images} done
-                          {b.failed > 0 && (
-                            <Box component="span" sx={{ color: 'error.main', ml: 1 }}>· {b.failed} failed</Box>
+                          {b.completed ?? 0}/{b.total_images} done
+                          {(b.failed ?? 0) > 0 && (
+                            <Box component="span" sx={{ color: 'error.main', ml: 1 }}>· {b.failed ?? 0} failed</Box>
                           )}
                         </Typography>
                       </TableCell>
