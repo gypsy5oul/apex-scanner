@@ -308,8 +308,26 @@ async def startup_event():
         }
     )
 
+    # Phase 1: connect to Postgres (idle — no reads/writes yet). Non-fatal:
+    # the app must keep running on Redis if the DB is unconfigured/unreachable.
+    if settings.DATABASE_URL:
+        try:
+            from app.db.engine import ping as db_ping
+            ok = await db_ping()
+            logger.info("Postgres connection check", connected=ok)
+        except Exception as e:
+            logger.warning("Postgres not reachable at startup (continuing on Redis)", error=str(e))
+    else:
+        logger.info("Postgres not configured (DATABASE_URL empty) — DB layer dormant")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Application shutdown tasks"""
     logger.info("Application shutting down")
+    if settings.DATABASE_URL:
+        try:
+            from app.db.engine import dispose as db_dispose
+            await db_dispose()
+        except Exception:
+            pass
