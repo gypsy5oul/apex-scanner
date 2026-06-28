@@ -19,7 +19,7 @@ from app.license_compliance import evaluate as evaluate_licenses, to_dict as lic
 from app.logging_config import get_logger, configure_logging, LogContext
 from app.trends import TrendAnalyzer
 from app import ownership
-from app.repositories import ScanRepository, BatchRepository, VulnerabilityRepository
+from app.repositories import ScanRepository, BatchRepository, VulnerabilityRepository, LicenseRepository
 from app.metrics import (
     SCANS_IN_PROGRESS, SCANS_COMPLETED, SCAN_DURATION,
     VULNERABILITIES_FOUND, SECRETS_FOUND, PACKAGES_FOUND,
@@ -758,10 +758,10 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = True) -> 
                         fail=license_compliance.severity_counts.get("fail", 0),
                         warn=license_compliance.severity_counts.get("warn", 0),
                     )
-                    redis_client.set(
-                        f"licenses:{scan_id}",
-                        json.dumps(licenses_to_dict(license_compliance)),
-                        ex=settings.SCAN_RESULT_TTL,
+                    LicenseRepository(redis_client).save(
+                        scan_id,
+                        licenses_to_dict(license_compliance),
+                        settings.SCAN_RESULT_TTL,
                     )
             except Exception as e:
                 logger.warning(

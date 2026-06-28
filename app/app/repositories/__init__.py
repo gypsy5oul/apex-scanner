@@ -8,5 +8,8 @@ phases introduce Postgres (dual-write, then read-cutover).
 from app.repositories.scan_repository import ScanRepository
 from app.repositories.batch_repository import BatchRepository
 from app.repositories.vulnerability_repository import VulnerabilityRepository
+from app.repositories.license_repository import LicenseRepository
 
-__all__ = ["ScanRepository", "BatchRepository", "VulnerabilityRepository"]
+__all__ = [
+    "ScanRepository", "BatchRepository", "VulnerabilityRepository", "LicenseRepository",
+]

@@ -22,7 +22,7 @@ from app.auth import (
     COOKIE_SECURE,
 )
 from app import oidc, ownership
-from app.repositories import BatchRepository, VulnerabilityRepository
+from app.repositories import BatchRepository, VulnerabilityRepository, LicenseRepository
 from app.logging_config import get_logger
 from app.scheduler import ScheduleManager, GoogleChatNotifier
 from app.base_image_tracker import BaseImageTracker
@@ -889,13 +889,13 @@ async def get_license_compliance(
 ):
     """Get license compliance result for a scan."""
     redis_client = get_redis_client()
-    raw = redis_client.get(f"licenses:{scan_id}")
-    if not raw:
+    data = LicenseRepository(redis_client).get(scan_id)
+    if not data:
         raise HTTPException(
             status_code=404,
             detail="License compliance data not found for this scan",
         )
-    return {"scan_id": scan_id, **json.loads(raw)}
+    return {"scan_id": scan_id, **data}
 
 
 # ============== Trends Endpoints ==============
