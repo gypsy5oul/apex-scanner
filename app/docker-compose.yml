@@ -392,6 +392,34 @@ services:
           cpus: '0.5'
           memory: 256M
 
+  # Phase 5: periodic pg_dump backups of the bundled Postgres. Uses the same
+  # postgres:16 image (it ships pg_dump) running a sleep-loop; writes gzipped
+  # dumps to the pg-backups volume, pruned after PG_BACKUP_RETENTION_DAYS.
+  pg-backup:
+    image: "postgres:16-alpine"
+    container_name: apex_pg_backup
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-apex}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGDATABASE: ${POSTGRES_DB:-apex}
+      BACKUP_INTERVAL: ${PG_BACKUP_INTERVAL:-86400}
+      RETENTION_DAYS: ${PG_BACKUP_RETENTION_DAYS:-7}
+    entrypoint: ["/bin/sh", "/pg_backup_loop.sh"]
+    volumes:
+      - pg-backups:/backups
+      - ./scripts/pg_backup_loop.sh:/pg_backup_loop.sh:ro
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
   dashboard:
     build:
       context: ../dashboard
@@ -416,4 +444,6 @@ volumes:
   redis-data:
     driver: local
   pg-data:
+    driver: local
+  pg-backups:
     driver: local
