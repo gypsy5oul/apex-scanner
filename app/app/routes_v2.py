@@ -2064,26 +2064,31 @@ async def scan_iac_repo(
     request: IacRepoRequest = Body(...),
     admin: TokenData = Depends(get_current_admin)
 ):
-    """Scan a Git repository for IaC misconfigurations (Admin only)"""
-    from app.iac_scanner import iac_scanner
+    """Scan a Git repository for IaC misconfigurations (Admin only).
 
-    result = iac_scanner.scan_git_repo(
-        repo_url=request.repo_url,
-        branch=request.branch,
-        token=request.token,
-        paths=request.paths
+    Runs on the worker (which has git + trivy), mirroring /iac/scan/content —
+    the API process has neither binary.
+    """
+    from app.tasks import scan_iac_repo as scan_iac_repo_task
+
+    task = scan_iac_repo_task.apply_async(
+        args=[request.repo_url, request.branch, request.token, request.paths],
+        queue='default'
     )
-
-    return {
-        "scan_id": result.scan_id,
-        "status": result.status,
-        "scanned_at": result.scanned_at,
-        "source": result.source,
-        "files_scanned": result.files_scanned,
-        "summary": result.summary,
-        "findings": result.findings,
-        "error": result.error
-    }
+    try:
+        # Clone + scan can take a while on large repos.
+        return task.get(timeout=180)
+    except Exception as e:
+        return {
+            "scan_id": task.id,
+            "status": "failed",
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
+            "source": f"repo:{request.repo_url}",
+            "files_scanned": 0,
+            "summary": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+            "findings": [],
+            "error": str(e),
+        }
 
 
 @router_v2.post(

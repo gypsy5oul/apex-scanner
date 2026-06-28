@@ -9,7 +9,7 @@ import traceback
 from celery import Celery
 from celery.signals import worker_ready
 from datetime import datetime, timezone
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from app.config import settings, get_redis_client
 from app.time_utils import now_iso
@@ -1725,3 +1725,29 @@ def scan_iac_content(self, content: str, filename: str = "Dockerfile") -> Dict[s
         # Cleanup
         if 'scan_dir' in locals() and os.path.exists(scan_dir):
             shutil.rmtree(scan_dir, ignore_errors=True)
+
+
+@celery.task(bind=True, name='scan_iac_repo', queue='default')
+def scan_iac_repo(self, repo_url: str, branch: str = "main",
+                  token: Optional[str] = None, paths: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Clone a Git repository and scan its IaC for misconfigurations.
+
+    Runs on the worker (which has both git and trivy) rather than inline in the
+    API process. Reuses iac_scanner.scan_git_repo, which sanitizes the repo URL
+    (http(s) only) and never leaks the token into the result/logs.
+    """
+    from app.iac_scanner import iac_scanner
+
+    result = iac_scanner.scan_git_repo(
+        repo_url=repo_url, branch=branch, token=token, paths=paths
+    )
+    return {
+        "scan_id": result.scan_id,
+        "status": result.status,
+        "scanned_at": result.scanned_at,
+        "source": result.source,
+        "files_scanned": result.files_scanned,
+        "summary": result.summary,
+        "findings": result.findings,
+        "error": result.error,
+    }
