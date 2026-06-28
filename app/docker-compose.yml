@@ -27,6 +27,7 @@ x-common-env: &common-env
   # centralized Postgres later by changing only this .env value — the bundled
   # `postgres` service is an interim, throwaway home.
   DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-apex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-apex}}
+  READ_FROM_POSTGRES: ${READ_FROM_POSTGRES:-false}
   SERVER_HOST: ${SERVER_HOST:?SERVER_HOST is required}
   SCAN_TIMEOUT: ${SCAN_TIMEOUT:-900}
   SCAN_RESULT_TTL: ${SCAN_RESULT_TTL:-2592000}

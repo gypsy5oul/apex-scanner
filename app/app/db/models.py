@@ -65,6 +65,7 @@ class Batch(Base):
     total_images: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[Optional[str]] = mapped_column(String(32))
     image_list: Mapped[List[Any]] = mapped_column(JSONB, default=list)
+    detail: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
 
 
 class License(Base):
