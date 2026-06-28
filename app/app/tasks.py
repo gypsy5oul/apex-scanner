@@ -19,7 +19,7 @@ from app.license_compliance import evaluate as evaluate_licenses, to_dict as lic
 from app.logging_config import get_logger, configure_logging, LogContext
 from app.trends import TrendAnalyzer
 from app import ownership
-from app.repositories import ScanRepository, BatchRepository
+from app.repositories import ScanRepository, BatchRepository, VulnerabilityRepository
 from app.metrics import (
     SCANS_IN_PROGRESS, SCANS_COMPLETED, SCAN_DURATION,
     VULNERABILITIES_FOUND, SECRETS_FOUND, PACKAGES_FOUND,
@@ -645,9 +645,9 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = True) -> 
                             ScanRepository(redis_client).create(scan_id, cached_data, ttl=settings.SCAN_RESULT_TTL)
 
                             # Copy vulnerabilities
-                            vulns = redis_client.get(f"vulns:{cached_scan_id}")
+                            vulns = VulnerabilityRepository(redis_client).get_raw(cached_scan_id)
                             if vulns:
-                                redis_client.set(f"vulns:{scan_id}", vulns, ex=settings.SCAN_RESULT_TTL)
+                                VulnerabilityRepository(redis_client).save_raw(scan_id, vulns, settings.SCAN_RESULT_TTL)
 
                             SCANS_COMPLETED.labels(status='cache_hit', scanner='all').inc()
                             SCANS_IN_PROGRESS.dec()  # pair the enqueue-time inc
@@ -825,18 +825,14 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = True) -> 
 
             # Store enriched vulnerabilities (already enriched earlier, before
             # report generation, so the HTML report could render EPSS/KEV).
-            redis_client.set(
-                f"vulns:{scan_id}",
-                json.dumps(enriched_vulns),
-                ex=settings.SCAN_RESULT_TTL
-            )
+            vuln_repo = VulnerabilityRepository(redis_client)
+            vuln_repo.save(scan_id, enriched_vulns, settings.SCAN_RESULT_TTL)
 
             # Index vulnerabilities by CVE for search
             for vuln in enriched_vulns:
                 cve_id = vuln.get("id", "").upper()
                 if cve_id:
-                    redis_client.sadd(f"cve_index:{cve_id}", scan_id)
-                    redis_client.expire(f"cve_index:{cve_id}", settings.SCAN_RESULT_TTL)
+                    vuln_repo.index_cve(scan_id, cve_id, settings.SCAN_RESULT_TTL)
 
             # Calculate scan duration
             duration = (datetime.now() - start_time).total_seconds()

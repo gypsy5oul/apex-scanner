@@ -18,7 +18,7 @@ from app.tasks import scan_image, batch_scan_images
 from app.config import settings, get_redis_client
 from app.auth import get_current_user, get_current_admin, TokenData
 from app import ownership
-from app.repositories import ScanRepository, BatchRepository
+from app.repositories import ScanRepository, BatchRepository, VulnerabilityRepository
 from app.logging_config import get_logger, LogContext
 from app.metrics import (
     SCANS_TOTAL, SCANS_IN_PROGRESS, BATCH_SCANS_TOTAL, BATCH_SIZE,
@@ -764,8 +764,8 @@ async def compare_scans(
             raise HTTPException(status_code=404, detail=f"Scan {scan_id_2} not found")
 
         # Get vulnerability details from stored data
-        vulns1_raw = redis_client.get(f"vulns:{scan_id_1}")
-        vulns2_raw = redis_client.get(f"vulns:{scan_id_2}")
+        vulns1_raw = VulnerabilityRepository(redis_client).get_raw(scan_id_1)
+        vulns2_raw = VulnerabilityRepository(redis_client).get_raw(scan_id_2)
 
         vulns1 = json.loads(vulns1_raw) if vulns1_raw else []
         vulns2 = json.loads(vulns2_raw) if vulns2_raw else []
@@ -848,14 +848,13 @@ async def search_vulnerabilities(
         # Get all vulnerability indices
         if cve:
             # Search by CVE index
-            scan_ids = redis_client.smembers(f"cve_index:{cve.upper()}")
+            scan_ids = VulnerabilityRepository(redis_client).scan_ids_for_cve(cve)
         elif image:
             # Search by image history
             scan_ids = redis_client.lrange(f"history:{image}", 0, -1)
         else:
             # Full scan required - use SCAN instead of KEYS for performance
-            vuln_keys = scan_redis_keys(redis_client, "vulns:*", count=200)
-            scan_ids = [s.replace("vulns:", "") for s in vuln_keys]
+            scan_ids = VulnerabilityRepository(redis_client).all_scan_ids_with_vulns()
 
         scan_id_list = list(scan_ids)[:500]  # Limit to prevent overload
 

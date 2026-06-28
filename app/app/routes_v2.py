@@ -22,7 +22,7 @@ from app.auth import (
     COOKIE_SECURE,
 )
 from app import oidc, ownership
-from app.repositories import BatchRepository
+from app.repositories import BatchRepository, VulnerabilityRepository
 from app.logging_config import get_logger
 from app.scheduler import ScheduleManager, GoogleChatNotifier
 from app.base_image_tracker import BaseImageTracker
@@ -235,7 +235,7 @@ async def batch_policy_check(
             results.append({"scan_id": sid, "image_name": image_name,
                             "passed": None, "fail": 0, "warn": 0})
             continue
-        raw = r.get(f"vulns:{sid}")
+        raw = VulnerabilityRepository(r).get_raw(sid)
         vulns = json.loads(raw) if raw else []
         ev = pe.evaluate_vulnerabilities(policy_id, vulns)
         results.append({
@@ -855,7 +855,7 @@ async def get_cvss_enriched(
     """Get CVSS enriched vulnerability data"""
     redis_client = get_redis_client()
 
-    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulns_raw = VulnerabilityRepository(redis_client).get_raw(scan_id)
     if not vulns_raw:
         raise HTTPException(status_code=404, detail="Vulnerabilities not found")
 
@@ -984,7 +984,7 @@ async def export_csv(
     """Export vulnerabilities to CSV"""
     redis_client = get_redis_client()
 
-    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulns_raw = VulnerabilityRepository(redis_client).get_raw(scan_id)
     if not vulns_raw:
         raise HTTPException(status_code=404, detail="Scan not found")
 
@@ -1057,7 +1057,7 @@ async def export_executive_pdf(
         raise HTTPException(status_code=404, detail="Scan not found")
 
     # Get vulnerabilities
-    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulns_raw = VulnerabilityRepository(redis_client).get_raw(scan_id)
     vulns = json.loads(vulns_raw) if vulns_raw else []
 
     # Enrich with CVSS
@@ -1104,7 +1104,7 @@ async def export_detailed_pdf(
     if not scan_data:
         raise HTTPException(status_code=404, detail="Scan not found")
 
-    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulns_raw = VulnerabilityRepository(redis_client).get_raw(scan_id)
     vulns = json.loads(vulns_raw) if vulns_raw else []
 
     enricher = CVSSEnricher()
@@ -1755,7 +1755,7 @@ async def get_enriched_vulnerabilities(
     redis_client = get_redis_client()
 
     # Get vulnerabilities
-    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulns_raw = VulnerabilityRepository(redis_client).get_raw(scan_id)
     if not vulns_raw:
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
 
@@ -1811,7 +1811,7 @@ async def get_kev_matches(scan_id: str = Path(..., description="Scan ID"), _user
     """Get vulnerabilities that are in the KEV catalog"""
     redis_client = get_redis_client()
 
-    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulns_raw = VulnerabilityRepository(redis_client).get_raw(scan_id)
     if not vulns_raw:
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
 
@@ -1842,7 +1842,7 @@ async def get_high_risk_vulns(scan_id: str = Path(..., description="Scan ID"), _
     """Get high risk vulnerabilities based on KEV status and EPSS scores"""
     redis_client = get_redis_client()
 
-    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulns_raw = VulnerabilityRepository(redis_client).get_raw(scan_id)
     if not vulns_raw:
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
 
@@ -2357,7 +2357,7 @@ async def evaluate_policy(request: PolicyEvaluateRequest = Body(...), _user: Tok
     # If scan_id provided, get vulnerabilities from scan
     if request.scan_id and not vulnerabilities:
         redis_client = get_redis_client()
-        vulns_raw = redis_client.get(f"vulns:{request.scan_id}")
+        vulns_raw = VulnerabilityRepository(redis_client).get_raw(request.scan_id)
         if not vulns_raw:
             raise HTTPException(status_code=404, detail=f"Scan {request.scan_id} not found")
         vulnerabilities = json.loads(vulns_raw)
@@ -2396,7 +2396,7 @@ async def check_scan_policies(scan_id: str = Path(..., description="Scan ID"), _
     from app.policy_engine import policy_engine
 
     redis_client = get_redis_client()
-    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulns_raw = VulnerabilityRepository(redis_client).get_raw(scan_id)
     if not vulns_raw:
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
 
@@ -2511,7 +2511,7 @@ async def get_ai_triage(
     if not scan_data:
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
 
-    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulns_raw = VulnerabilityRepository(redis_client).get_raw(scan_id)
     vulnerabilities = json.loads(vulns_raw) if vulns_raw else []
 
     result = generate_triage(scan_id, scan_data, vulnerabilities, force=force)
@@ -2543,7 +2543,7 @@ async def get_ai_remediation(
     if not scan_data:
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
 
-    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulns_raw = VulnerabilityRepository(redis_client).get_raw(scan_id)
     vulnerabilities = json.loads(vulns_raw) if vulns_raw else []
 
     result = generate_remediation_summary(scan_id, scan_data, vulnerabilities)
@@ -2601,7 +2601,7 @@ async def get_compliance_assessment(
         cached["cached"] = True
         return cached
 
-    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulns_raw = VulnerabilityRepository(redis_client).get_raw(scan_id)
     vulnerabilities = json.loads(vulns_raw) if vulns_raw else []
 
     # Calculate scan age
@@ -2839,7 +2839,7 @@ async def get_vex_enriched_vulns(
     if not scan_data:
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
 
-    vulns_raw = redis_client.get(f"vulns:{scan_id}")
+    vulns_raw = VulnerabilityRepository(redis_client).get_raw(scan_id)
     if not vulns_raw:
         return {"scan_id": scan_id, "vulnerabilities": [], "total": 0}
 
