@@ -107,12 +107,14 @@ class ScanRepository:
         """Add the scan to the owner's per-user index (tenancy)."""
         ownership.record_scan_owner(self.r, scan_id, username, ts)
 
-    def add_to_history(self, image_name: str, scan_id: str, max_len: int, ttl: int) -> None:
-        """Push the scan onto the image's history list (capped + TTL'd)."""
+    def add_to_history(self, image_name: str, scan_id: str, max_len: int,
+                       ttl: Optional[int] = None) -> None:
+        """Push the scan onto the image's history list (capped; TTL optional)."""
         key = f"history:{image_name}"
         self.r.lpush(key, scan_id)
         self.r.ltrim(key, 0, max_len - 1)
-        self.r.expire(key, ttl)
+        if ttl is not None:
+            self.r.expire(key, ttl)
 
     # ---- stats helpers ----------------------------------------------
     def image_names_for(self, scan_ids: List[str]) -> List[str]:

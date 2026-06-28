@@ -562,6 +562,7 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
 async def start_batch_scan(request: BatchScanRequest = Body(...), _user: TokenData = Depends(get_current_user)):
     """Start batch scanning for multiple images"""
     redis_client = get_redis_client()
+    scans = ScanRepository(redis_client)
 
     with LogContext(operation="batch_scan", image_count=len(request.images)):
         try:
@@ -579,7 +580,7 @@ async def start_batch_scan(request: BatchScanRequest = Body(...), _user: TokenDa
                 scan_ids.append(scan_id)
 
                 # Initialize each scan
-                redis_client.hset(scan_id, mapping={
+                scans.create(scan_id, {
                     "status": ScanStatus.IN_PROGRESS,
                     "image_name": image_name,
                     "batch_id": batch_id,
@@ -595,14 +596,11 @@ async def start_batch_scan(request: BatchScanRequest = Body(...), _user: TokenDa
                     "sbom_urls": "{}",
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     ownership.OWNER_FIELD: _user.username,
-                })
-                redis_client.expire(scan_id, settings.SCAN_RESULT_TTL)
-                ownership.record_scan_owner(redis_client, scan_id, _user.username)
+                }, ttl=settings.SCAN_RESULT_TTL)
+                scans.record_owner(scan_id, _user.username)
 
-                # Track in image history
-                history_key = f"history:{image_name}"
-                redis_client.lpush(history_key, scan_id)
-                redis_client.ltrim(history_key, 0, settings.MAX_HISTORY_PER_IMAGE - 1)
+                # Track in image history (no TTL on the batch path, as before)
+                scans.add_to_history(image_name, scan_id, settings.MAX_HISTORY_PER_IMAGE)
 
                 # Update metrics
                 SCANS_TOTAL.labels(
