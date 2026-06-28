@@ -39,6 +39,7 @@ class LicenseRepository:
 
     def save(self, scan_id: str, data: Dict[str, Any], ttl: int) -> None:
         """Persist a scan's license result (JSON-encoded) with a TTL."""
-        self.r.set(self._key(scan_id), json.dumps(data), ex=ttl)
+        if settings.WRITE_TO_REDIS:
+            self.r.set(self._key(scan_id), json.dumps(data), ex=ttl)
         if settings.DATABASE_URL:
             upsert_license(scan_id, data)

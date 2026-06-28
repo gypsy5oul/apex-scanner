@@ -65,33 +65,50 @@ class BatchRepository:
         return self.user_ids(user.username, limit)
 
     # ---- writes ------------------------------------------------------
+    @staticmethod
+    def _write_redis() -> bool:
+        return settings.WRITE_TO_REDIS
+
+    @staticmethod
+    def _strshape(mapping: Dict[str, Any]) -> Dict[str, Any]:
+        return {k: ("" if v is None else str(v)) for k, v in mapping.items()}
+
     def create(self, batch_id: str, mapping: Dict[str, Any], ttl: Optional[int] = None) -> None:
         """Write a batch record (hash) and optionally set its TTL."""
-        self.r.hset(self._key(batch_id), mapping=mapping)
-        if ttl is not None:
-            self.r.expire(self._key(batch_id), ttl)
-        self._dual_write(batch_id)
+        if self._write_redis():
+            self.r.hset(self._key(batch_id), mapping=mapping)
+            if ttl is not None:
+                self.r.expire(self._key(batch_id), ttl)
+        self._persist(batch_id, mapping, full=True)
 
     def save(self, batch_id: str, mapping: Dict[str, Any]) -> None:
         """Merge fields into an existing batch record, leaving TTL intact."""
-        self.r.hset(self._key(batch_id), mapping=mapping)
-        self._dual_write(batch_id)
+        if self._write_redis():
+            self.r.hset(self._key(batch_id), mapping=mapping)
+        self._persist(batch_id, mapping, full=False)
 
-    def _dual_write(self, batch_id: str) -> None:
-        """Phase 2: mirror the full current batch record into Postgres (best-effort).
-
-        Reads the source straight from Redis (NOT self.get(), which may now read
-        from Postgres) — Redis is authoritative and is what we're mirroring."""
-        if settings.DATABASE_URL:
+    def _persist(self, batch_id: str, mapping: Dict[str, Any], full: bool) -> None:
+        if not settings.DATABASE_URL:
+            return
+        if self._write_redis():
             upsert_batch(batch_id, self.r.hgetall(self._key(batch_id)))
+        elif full:
+            upsert_batch(batch_id, self._strshape(mapping))
+        else:
+            from app.db.read_pg import read_batch_detail
+            existing = read_batch_detail(batch_id) or {}
+            upsert_batch(batch_id, {**existing, **self._strshape(mapping)})
 
     def record_owner(self, batch_id: str, username: str, ts: Optional[float] = None) -> None:
-        """Add the batch to the owner's per-user index (tenancy)."""
-        ownership.record_batch_owner(self.r, batch_id, username, ts)
+        """Add the batch to the owner's per-user index (PG-only: SQL WHERE created_by=)."""
+        if self._write_redis():
+            ownership.record_batch_owner(self.r, batch_id, username, ts)
 
     def mark_recent(self, batch_id: str, ts: Optional[float] = None,
                     cap: int = MAX_RECENT_BATCHES) -> None:
-        """Add the batch to the global recent set, capped to the newest ``cap``."""
+        """Add the batch to the global recent set (PG-only: SQL ORDER BY created_at)."""
+        if not self._write_redis():
+            return
         if ts is None:
             ts = datetime.now(timezone.utc).timestamp()
         self.r.zadd(RECENT_BATCHES_KEY, {batch_id: ts})

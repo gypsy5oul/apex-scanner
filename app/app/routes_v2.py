@@ -62,7 +62,14 @@ async def admin_login(request: LoginRequest = Body(...), http_request: Request =
     - System status and updates
     - Worker monitoring
     """
-    login_response = login(request.username, request.password, request=http_request)
+    from app.db.audit import record_audit, client_ip
+    _ip = client_ip(http_request)
+    try:
+        login_response = login(request.username, request.password, request=http_request)
+    except HTTPException as e:
+        record_audit(request.username, "auth.login_failed", detail={"status": e.status_code}, ip=_ip)
+        raise
+    record_audit(login_response.username, "auth.login", ip=_ip)
 
     # Build JSON response with user info (token NOT included in body for cookie-based auth)
     response = JSONResponse(content={
@@ -2193,10 +2200,12 @@ class PolicyEvaluateRequest(BaseModel):
 )
 async def create_policy(
     request: PolicyCreateRequest = Body(...),
+    http_request: Request = None,
     admin: TokenData = Depends(get_current_admin)
 ):
     """Create a new security policy (Admin only)"""
     from app.policy_engine import policy_engine
+    from app.db.audit import record_audit, client_ip
 
     policy = policy_engine.create_policy(
         name=request.name,
@@ -2207,6 +2216,8 @@ async def create_policy(
         apply_to=request.apply_to
     )
 
+    record_audit(admin.username, "policy.create", target=policy.id,
+                 detail={"name": policy.name}, ip=client_ip(http_request))
     return {
         "status": "created",
         "policy": {
@@ -2330,15 +2341,18 @@ async def update_policy(
 )
 async def delete_policy(
     policy_id: str = Path(..., description="Policy ID"),
+    http_request: Request = None,
     admin: TokenData = Depends(get_current_admin)
 ):
     """Delete a security policy (Admin only)"""
     from app.policy_engine import policy_engine
+    from app.db.audit import record_audit, client_ip
 
     deleted = policy_engine.delete_policy(policy_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Policy not found")
 
+    record_audit(admin.username, "policy.delete", target=policy_id, ip=client_ip(http_request))
     return {"status": "deleted", "policy_id": policy_id}
 
 
@@ -2445,10 +2459,15 @@ async def check_scan_policies(scan_id: str = Path(..., description="Scan ID"), _
 )
 async def create_api_key_endpoint(
     request: APIKeyCreate = Body(...),
+    http_request: Request = None,
     admin: TokenData = Depends(get_current_admin)
 ):
     """Create a new API key (Admin only). The raw key is only shown once."""
-    return create_api_key(name=request.name, expires_days=request.expires_days)
+    from app.db.audit import record_audit, client_ip
+    result = create_api_key(name=request.name, expires_days=request.expires_days)
+    record_audit(admin.username, "apikey.create", target=request.name,
+                 detail={"expires_days": request.expires_days}, ip=client_ip(http_request))
+    return result
 
 
 @router_v2.get(
@@ -2474,12 +2493,15 @@ async def list_api_keys_endpoint(admin: TokenData = Depends(get_current_admin)):
 )
 async def revoke_api_key_endpoint(
     key_id: str = Path(..., description="API key ID to revoke"),
+    http_request: Request = None,
     admin: TokenData = Depends(get_current_admin)
 ):
     """Revoke an API key (Admin only)"""
+    from app.db.audit import record_audit, client_ip
     revoked = revoke_api_key(key_id)
     if not revoked:
         raise HTTPException(status_code=404, detail="API key not found")
+    record_audit(admin.username, "apikey.revoke", target=key_id, ip=client_ip(http_request))
     return {"status": "revoked", "key_id": key_id}
 
 

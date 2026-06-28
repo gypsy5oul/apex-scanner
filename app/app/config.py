@@ -32,6 +32,13 @@ class Settings(BaseSettings):
         default=False,
         description="Read durable data from Postgres instead of Redis (Phase 3)"
     )
+    # Phase 4 kill-switch: when false, repositories stop writing durable data to
+    # Redis and persist to Postgres only. Default true (keep dual-writing) so the
+    # cutover is a deliberate, reversible per-deploy flip.
+    WRITE_TO_REDIS: bool = Field(
+        default=True,
+        description="Mirror durable writes into Redis (Phase 4: set false for PG-only)"
+    )
     REDIS_MAX_CONNECTIONS: int = Field(
         default=50,
         description="Maximum Redis connection pool size"

@@ -36,6 +36,11 @@ class ScanRepository:
         return self.r.hgetall(scan_id)
 
     def exists(self, scan_id: str) -> bool:
+        if self._pg():
+            from app.db.read_pg import read_scan_exists
+            e = read_scan_exists(scan_id)
+            if e is not None:
+                return e
         return bool(self.r.exists(scan_id))
 
     def get_many(self, scan_ids: List[str]) -> List[Dict[str, Any]]:
@@ -131,43 +136,78 @@ class ScanRepository:
         return len(scan_redis_keys(self.r, "history:*", count=200))
 
     def get_status(self, scan_id: str) -> Optional[str]:
+        if self._pg():
+            from app.db.read_pg import read_scan_status
+            st = read_scan_status(scan_id)
+            if st is not None:
+                return st
         return self.r.hget(scan_id, "status")
 
     # ---- writes ------------------------------------------------------
+    @staticmethod
+    def _write_redis() -> bool:
+        """Phase 4: when false, durable data is written to Postgres only."""
+        return settings.WRITE_TO_REDIS
+
+    @staticmethod
+    def _strshape(mapping: Dict[str, Any]) -> Dict[str, Any]:
+        """Coerce to the all-string shape Redis hgetall would return, so the PG
+        ``detail`` mirror is identical whether written via Redis or PG-only."""
+        return {k: ("" if v is None else str(v)) for k, v in mapping.items()}
+
     def create(self, scan_id: str, mapping: Dict[str, Any], ttl: Optional[int] = None) -> None:
         """Write a scan record (hash) and optionally set its TTL."""
-        self.r.hset(scan_id, mapping=mapping)
-        if ttl is not None:
-            self.r.expire(scan_id, ttl)
-        self._dual_write(scan_id)
-
-    def _dual_write(self, scan_id: str) -> None:
-        """Phase 2: mirror the full current scan record into Postgres (best-effort).
-
-        Reads the source straight from Redis (NOT self.get(), which may now read
-        from Postgres) — Redis is authoritative and is what we're mirroring."""
-        if settings.DATABASE_URL:
-            upsert_scan(scan_id, self.r.hgetall(scan_id))
+        if self._write_redis():
+            self.r.hset(scan_id, mapping=mapping)
+            if ttl is not None:
+                self.r.expire(scan_id, ttl)
+        self._persist(scan_id, mapping, full=True)
 
     def save(self, scan_id: str, mapping: Dict[str, Any]) -> None:
         """Merge fields into an existing scan record (hash), leaving TTL intact."""
-        self.r.hset(scan_id, mapping=mapping)
-        self._dual_write(scan_id)
+        if self._write_redis():
+            self.r.hset(scan_id, mapping=mapping)
+        self._persist(scan_id, mapping, full=False)
 
     def set_status(self, scan_id: str, status: str, error: Optional[str] = None) -> None:
         """Set a scan's status (and optional error) — used for failure markers."""
         mapping: Dict[str, Any] = {"status": status}
         if error is not None:
             mapping["error"] = error
-        self.r.hset(scan_id, mapping=mapping)
+        if self._write_redis():
+            self.r.hset(scan_id, mapping=mapping)
+        self._persist(scan_id, mapping, full=False)
+
+    def _persist(self, scan_id: str, mapping: Dict[str, Any], full: bool) -> None:
+        """Mirror the scan into Postgres. In dual-write mode the merged state is
+        read back from Redis (authoritative); in PG-only mode it's merged against
+        the existing PG row so partial updates don't lose fields."""
+        if not settings.DATABASE_URL:
+            return
+        if self._write_redis():
+            upsert_scan(scan_id, self.r.hgetall(scan_id))
+        elif full:
+            upsert_scan(scan_id, self._strshape(mapping))
+        else:
+            from app.db.read_pg import read_scan_detail
+            existing = read_scan_detail(scan_id) or {}
+            upsert_scan(scan_id, {**existing, **self._strshape(mapping)})
 
     def record_owner(self, scan_id: str, username: str, ts: Optional[float] = None) -> None:
-        """Add the scan to the owner's per-user index (tenancy)."""
-        ownership.record_scan_owner(self.r, scan_id, username, ts)
+        """Add the scan to the owner's per-user index (tenancy).
+
+        PG-only mode skips this — ``created_by`` lives on the scan record and the
+        per-user view is a SQL ``WHERE created_by=`` query."""
+        if self._write_redis():
+            ownership.record_scan_owner(self.r, scan_id, username, ts)
 
     def add_to_history(self, image_name: str, scan_id: str, max_len: int,
                        ttl: Optional[int] = None) -> None:
-        """Push the scan onto the image's history list (capped; TTL optional)."""
+        """Push the scan onto the image's history list (capped; TTL optional).
+
+        PG-only mode skips this — history is a SQL ``WHERE image_name=`` query."""
+        if not self._write_redis():
+            return
         key = f"history:{image_name}"
         self.r.lpush(key, scan_id)
         self.r.ltrim(key, 0, max_len - 1)
