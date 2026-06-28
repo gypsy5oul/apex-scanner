@@ -342,7 +342,7 @@ spec:
           <TabPanel value={tabValue} index={1}>
             {!isAuthenticated && (
               <Alert severity="warning" sx={{ mb: 2 }}>
-                Please login as admin to scan Git repositories
+                Please login to scan Git repositories
               </Alert>
             )}
 

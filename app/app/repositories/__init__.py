@@ -6,5 +6,6 @@ Redis calls verbatim — no behaviour change — and become the seam where later
 phases introduce Postgres (dual-write, then read-cutover).
 """
 from app.repositories.scan_repository import ScanRepository
+from app.repositories.batch_repository import BatchRepository
 
-__all__ = ["ScanRepository"]
+__all__ = ["ScanRepository", "BatchRepository"]
