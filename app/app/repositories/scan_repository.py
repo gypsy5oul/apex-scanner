@@ -18,13 +18,17 @@ class ScanRepository:
     def __init__(self, redis_client=None):
         self.r = redis_client if redis_client is not None else get_redis_client()
 
+    def _pg(self) -> bool:
+        """Phase 3: read from Postgres (with Redis fallback) when enabled."""
+        return bool(settings.DATABASE_URL and settings.READ_FROM_POSTGRES)
+
     # ---- single scan -------------------------------------------------
     def get(self, scan_id: str) -> Dict[str, Any]:
         """Return the scan hash, or an empty dict if it doesn't exist.
 
         Phase 3: when READ_FROM_POSTGRES is on, read from Postgres (the dual-write
         mirror) and fall back to Redis on a miss. Redis stays the safety net."""
-        if settings.DATABASE_URL and settings.READ_FROM_POSTGRES:
+        if self._pg():
             from app.db.read_pg import read_scan_detail
             detail = read_scan_detail(scan_id)
             if detail:
@@ -39,6 +43,11 @@ class ScanRepository:
         empty dict for any that are missing)."""
         if not scan_ids:
             return []
+        if self._pg():
+            from app.db.read_pg import read_scans_details
+            m = read_scans_details(scan_ids)
+            if m is not None:
+                return [m.get(sid, {}) for sid in scan_ids]
         pipe = self.r.pipeline()
         for sid in scan_ids:
             pipe.hgetall(sid)
@@ -51,6 +60,11 @@ class ScanRepository:
         Wraps the prior ``get_recent_scan_ids``: sorted-set first, falling
         back to scanning ``history:*`` keys when the set isn't populated.
         """
+        if self._pg():
+            from app.db.read_pg import read_recent_scan_ids
+            ids = read_recent_scan_ids(limit)
+            if ids is not None:
+                return ids
         recent = self.r.zrevrange("recent_scans", 0, limit - 1)
         if recent:
             return recent
@@ -61,15 +75,30 @@ class ScanRepository:
 
     def user_ids(self, username: str, limit: Optional[int] = None) -> List[str]:
         """Scan ids owned by ``username`` (per-user index), newest-first."""
+        if self._pg():
+            from app.db.read_pg import read_user_scan_ids
+            ids = read_user_scan_ids(username, limit)
+            if ids is not None:
+                return ids
         return ownership.user_scan_ids(self.r, username, limit)
 
     def owned_id_set(self, username: str) -> set:
         """Set of scan ids owned by ``username`` (for membership checks)."""
+        if self._pg():
+            from app.db.read_pg import read_user_scan_id_set
+            ids = read_user_scan_id_set(username)
+            if ids is not None:
+                return ids
         return set(ownership.user_scan_ids(self.r, username))
 
     def all_recent_history_ids(self) -> List[str]:
         """Admin 'recent scans' source: the 3 newest ids from every
         ``history:*`` list, flattened (verbatim wrap of the prior admin path)."""
+        if self._pg():
+            from app.db.read_pg import read_recent_per_image_ids
+            ids = read_recent_per_image_ids()
+            if ids is not None:
+                return ids
         ids: List[str] = []
         for key in scan_redis_keys(self.r, "history:*", count=200):
             ids.extend(self.r.lrange(key, 0, 2))
@@ -84,11 +113,21 @@ class ScanRepository:
 
     # ---- history -----------------------------------------------------
     def image_history_ids(self, image_name: str, limit: int = 50) -> List[str]:
+        if self._pg():
+            from app.db.read_pg import read_image_history_ids
+            ids = read_image_history_ids(image_name, limit)
+            if ids is not None:
+                return ids
         return self.r.lrange(f"history:{image_name}", 0, limit - 1)
 
     # ---- stats -------------------------------------------------------
     def unique_image_count(self) -> int:
         """Number of distinct images scanned (one ``history:*`` key each)."""
+        if self._pg():
+            from app.db.read_pg import read_unique_image_count
+            n = read_unique_image_count()
+            if n is not None:
+                return n
         return len(scan_redis_keys(self.r, "history:*", count=200))
 
     def get_status(self, scan_id: str) -> Optional[str]:
@@ -140,6 +179,11 @@ class ScanRepository:
         """Batch-fetch ``image_name`` for the given scan ids (skips missing)."""
         if not scan_ids:
             return []
+        if self._pg():
+            from app.db.read_pg import read_image_names_for
+            names = read_image_names_for(scan_ids)
+            if names is not None:
+                return names
         pipe = self.r.pipeline()
         for sid in scan_ids:
             pipe.hget(sid, "image_name")

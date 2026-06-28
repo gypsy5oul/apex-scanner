@@ -25,7 +25,15 @@ class LicenseRepository:
         return self.r.get(self._key(scan_id))
 
     def get(self, scan_id: str) -> Optional[Dict[str, Any]]:
-        """The parsed license result for a scan (None if absent)."""
+        """The parsed license result for a scan (None if absent).
+
+        Phase 3: read the data JSONB from Postgres when enabled, fall back to
+        Redis on a miss."""
+        if settings.DATABASE_URL and settings.READ_FROM_POSTGRES:
+            from app.db.read_pg import read_license_data
+            data = read_license_data(scan_id)
+            if data:
+                return data
         raw = self.get_raw(scan_id)
         return json.loads(raw) if raw else None
 
