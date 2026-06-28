@@ -22,6 +22,7 @@ from app.auth import (
     COOKIE_SECURE,
 )
 from app import oidc, ownership
+from app.repositories import BatchRepository
 from app.logging_config import get_logger
 from app.scheduler import ScheduleManager, GoogleChatNotifier
 from app.base_image_tracker import BaseImageTracker
@@ -126,14 +127,12 @@ async def list_batches(
     _user: TokenData = Depends(get_current_user),
 ):
     r = get_redis_client()
-    if _user.role == "admin":
-        batch_ids = r.zrevrange("recent_batches", 0, -1)
-    else:
-        batch_ids = ownership.user_batch_ids(r, _user.username)
+    batches = BatchRepository(r)
+    batch_ids = batches.visible_ids(_user)
 
     out = []
     for bid in batch_ids:
-        bh = r.hgetall(f"batch:{bid}")
+        bh = batches.get(bid)
         if not bh:
             continue
         scan_ids = json.loads(bh.get("scan_ids", "[]"))
@@ -168,7 +167,7 @@ async def batch_detail(
     _user: TokenData = Depends(get_current_user),
 ):
     r = get_redis_client()
-    bh = r.hgetall(f"batch:{batch_id}")
+    bh = BatchRepository(r).get(batch_id)
     if not bh:
         raise HTTPException(status_code=404, detail="Batch not found")
     if _user.role != "admin" and bh.get(ownership.OWNER_FIELD) != _user.username:
@@ -216,7 +215,7 @@ async def batch_policy_check(
     _user: TokenData = Depends(get_current_user),
 ):
     r = get_redis_client()
-    bh = r.hgetall(f"batch:{batch_id}")
+    bh = BatchRepository(r).get(batch_id)
     if not bh:
         raise HTTPException(status_code=404, detail="Batch not found")
     if _user.role != "admin" and bh.get(ownership.OWNER_FIELD) != _user.username:
@@ -2068,9 +2067,9 @@ async def scan_iac_files(request: IacMultiFileRequest = Body(...), _user: TokenD
 )
 async def scan_iac_repo(
     request: IacRepoRequest = Body(...),
-    admin: TokenData = Depends(get_current_admin)
+    _user: TokenData = Depends(get_current_user)
 ):
-    """Scan a Git repository for IaC misconfigurations (Admin only).
+    """Scan a Git repository for IaC misconfigurations (any authenticated user).
 
     Runs on the worker (which has git + trivy), mirroring /iac/scan/content —
     the API process has neither binary.

@@ -19,7 +19,7 @@ from app.license_compliance import evaluate as evaluate_licenses, to_dict as lic
 from app.logging_config import get_logger, configure_logging, LogContext
 from app.trends import TrendAnalyzer
 from app import ownership
-from app.repositories import ScanRepository
+from app.repositories import ScanRepository, BatchRepository
 from app.metrics import (
     SCANS_IN_PROGRESS, SCANS_COMPLETED, SCAN_DURATION,
     VULNERABILITIES_FOUND, SECRETS_FOUND, PACKAGES_FOUND,
@@ -1087,7 +1087,7 @@ def batch_scan_images(
 
         # Update batch metadata. Per-scan progress is tracked by polling
         # GET /scan/batch/{batch_id} which reads each scan hash directly.
-        redis_client.hset(f"batch:{batch_id}", mapping={
+        BatchRepository(redis_client).save(batch_id, {
             "status": "dispatched",
             "dispatched_count": len(dispatched),
             "dispatch_failed_count": len(failed_to_dispatch),

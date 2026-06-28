@@ -18,7 +18,7 @@ from app.tasks import scan_image, batch_scan_images
 from app.config import settings, get_redis_client
 from app.auth import get_current_user, get_current_admin, TokenData
 from app import ownership
-from app.repositories import ScanRepository
+from app.repositories import ScanRepository, BatchRepository
 from app.logging_config import get_logger, LogContext
 from app.metrics import (
     SCANS_TOTAL, SCANS_IN_PROGRESS, BATCH_SCANS_TOTAL, BATCH_SIZE,
@@ -611,18 +611,17 @@ async def start_batch_scan(request: BatchScanRequest = Body(...), _user: TokenDa
                 ).inc()
 
             # Store batch metadata
-            redis_client.hset(f"batch:{batch_id}", mapping={
+            batches = BatchRepository(redis_client)
+            batches.create(batch_id, {
                 "scan_ids": json.dumps(scan_ids),
                 "images": json.dumps(request.images),
                 "total_images": len(request.images),
                 "status": "in_progress",
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 ownership.OWNER_FIELD: _user.username,
-            })
-            redis_client.expire(f"batch:{batch_id}", settings.SCAN_RESULT_TTL)
-            ownership.record_batch_owner(redis_client, batch_id, _user.username)
-            redis_client.zadd("recent_batches", {batch_id: datetime.now(timezone.utc).timestamp()})
-            redis_client.zremrangebyrank("recent_batches", 0, -2001)
+            }, ttl=settings.SCAN_RESULT_TTL)
+            batches.record_owner(batch_id, _user.username)
+            batches.mark_recent(batch_id)
 
             # Update batch metrics
             BATCH_SCANS_TOTAL.inc()
@@ -665,7 +664,7 @@ async def get_batch_status(batch_id: str = Path(..., description="Batch ID", pat
     """Get status of a batch scan"""
     redis_client = get_redis_client()
 
-    batch_data = redis_client.hgetall(f"batch:{batch_id}")
+    batch_data = BatchRepository(redis_client).get(batch_id)
     if not batch_data:
         raise HTTPException(status_code=404, detail="Batch not found")
 
