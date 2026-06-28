@@ -449,6 +449,7 @@ def parse_scan_result(scan_id: str, result: Dict[str, str]) -> EnhancedScanResul
 async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depends(get_current_user)):
     """Start a new multi-scanner security analysis"""
     redis_client = get_redis_client()
+    scans = ScanRepository(redis_client)
 
     with LogContext(image=request.image_name, operation="start_scan"):
         try:
@@ -467,7 +468,7 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
             if not claimed:
                 existing_scan_id = redis_client.get(dedup_key)
                 existing_status = (
-                    redis_client.hget(existing_scan_id, "status")
+                    scans.get_status(existing_scan_id)
                     if existing_scan_id else None
                 )
                 if existing_status == "in_progress":
@@ -476,7 +477,7 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
                         scan_id=existing_scan_id,
                         image=request.image_name
                     )
-                    ownership.record_scan_owner(redis_client, existing_scan_id, _user.username)
+                    scans.record_owner(existing_scan_id, _user.username)
                     return ScanResponse(
                         scan_id=existing_scan_id,
                         status=ScanStatus.IN_PROGRESS,
@@ -493,7 +494,7 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
             )
 
             # Initialize scan state in Redis with TTL
-            redis_client.hset(scan_id, mapping={
+            scans.create(scan_id, {
                 "status": ScanStatus.IN_PROGRESS,
                 "image_name": request.image_name,
                 "critical": 0,
@@ -508,15 +509,14 @@ async def start_scan(request: ScanRequest = Body(...), _user: TokenData = Depend
                 "sbom_urls": "{}",
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 ownership.OWNER_FIELD: _user.username,
-            })
-            redis_client.expire(scan_id, settings.SCAN_RESULT_TTL)
-            ownership.record_scan_owner(redis_client, scan_id, _user.username)
+            }, ttl=settings.SCAN_RESULT_TTL)
+            scans.record_owner(scan_id, _user.username)
 
             # Track in image history index
-            history_key = f"history:{request.image_name}"
-            redis_client.lpush(history_key, scan_id)
-            redis_client.ltrim(history_key, 0, settings.MAX_HISTORY_PER_IMAGE - 1)
-            redis_client.expire(history_key, settings.SCAN_RESULT_TTL)
+            scans.add_to_history(
+                request.image_name, scan_id,
+                settings.MAX_HISTORY_PER_IMAGE, settings.SCAN_RESULT_TTL,
+            )
 
             # Update metrics
             SCANS_TOTAL.labels(
@@ -941,21 +941,17 @@ async def get_image_history(
     redis_client = get_redis_client()
 
     with LogContext(operation="get_history", image=image_name):
-        history_key = f"history:{image_name}"
-        scan_ids = redis_client.lrange(history_key, 0, limit - 1)
+        scans = ScanRepository(redis_client)
+        scan_ids = scans.image_history_ids(image_name, limit)
 
         if not scan_ids:
             raise HTTPException(status_code=404, detail=f"No scan history found for {image_name}")
 
-        # Pipeline: Get all scan data in batch
-        pipe = redis_client.pipeline()
-        for scan_id in scan_ids:
-            pipe.hgetall(scan_id)
-        scan_results = pipe.execute()
+        scan_results = scans.get_many(scan_ids)
 
         owned_ids = None
         if _user.role != "admin":
-            owned_ids = set(ownership.user_scan_ids(redis_client, _user.username))
+            owned_ids = scans.owned_id_set(_user.username)
 
         history = []
         for scan_id, result in zip(scan_ids, scan_results):
@@ -1098,28 +1094,17 @@ async def get_recent_scans(
     redis_client = get_redis_client()
 
     with LogContext(operation="get_recent_scans"):
+        scans = ScanRepository(redis_client)
         if _user.role == "admin":
-            history_keys = scan_redis_keys(redis_client, "history:*", count=200)
-            if not history_keys:
-                return {"scans": [], "total": 0}
-            pipe = redis_client.pipeline()
-            for key in history_keys:
-                pipe.lrange(key, 0, 2)
-            history_results = pipe.execute()
-            all_scan_ids = []
-            for scan_ids in history_results:
-                all_scan_ids.extend(scan_ids)
+            all_scan_ids = scans.all_recent_history_ids()
         else:
-            all_scan_ids = ScanRepository(redis_client).user_ids(_user.username, limit * 3)
+            all_scan_ids = scans.user_ids(_user.username, limit * 3)
 
         if not all_scan_ids:
             return {"scans": [], "total": 0}
 
-        # Pipeline 2: Get all scan details in batch
-        pipe = redis_client.pipeline()
-        for scan_id in all_scan_ids:
-            pipe.hgetall(scan_id)
-        scan_results = pipe.execute()
+        # Get all scan details in batch
+        scan_results = scans.get_many(all_scan_ids)
 
         # Build response
         all_scans = []
