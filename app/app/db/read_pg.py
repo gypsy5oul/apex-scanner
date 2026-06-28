@@ -41,6 +41,22 @@ def read_scan_detail(scan_id: str) -> Optional[Dict[str, Any]]:
     return _run(q)
 
 
+def read_scan_status(scan_id: str) -> Optional[str]:
+    def q(s):
+        from sqlalchemy import select
+        from app.db.models import Scan
+        return s.execute(select(Scan.status).where(Scan.id == scan_id)).scalar_one_or_none()
+    return _run(q)
+
+
+def read_scan_exists(scan_id: str) -> Optional[bool]:
+    def q(s):
+        from sqlalchemy import select, exists
+        from app.db.models import Scan
+        return bool(s.execute(select(exists().where(Scan.id == scan_id))).scalar())
+    return _run(q)
+
+
 def read_scans_details(scan_ids) -> Optional[Dict[str, Dict[str, Any]]]:
     """Map scan_id -> detail for the given ids (missing ids simply absent)."""
     ids = list(scan_ids)
