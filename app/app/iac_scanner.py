@@ -15,6 +15,21 @@ from enum import Enum
 
 from app.logging_config import get_logger
 
+
+def _safe_join(base: str, name: str) -> str:
+    """Join ``name`` under ``base``, blocking path traversal / absolute paths.
+
+    Allows nested relative paths (e.g. ``k8s/deploy.yaml``) but never lets the
+    result escape ``base`` — a user-supplied filename like ``../../etc/x`` or
+    ``/var/www/html/reports/evil.html`` raises ValueError instead of writing
+    outside the scan sandbox.
+    """
+    base_n = os.path.normpath(base)
+    full = os.path.normpath(os.path.join(base_n, name))
+    if full != base_n and not full.startswith(base_n + os.sep):
+        raise ValueError(f"Unsafe path in filename: {name!r}")
+    return full
+
 logger = get_logger(__name__)
 
 
@@ -81,8 +96,9 @@ class IacScanner:
         try:
             os.makedirs(scan_dir, exist_ok=True)
 
-            # Write content to file
-            file_path = os.path.join(scan_dir, filename)
+            # Write content to file (sanitized — never escapes scan_dir)
+            file_path = _safe_join(scan_dir, filename)
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
             with open(file_path, 'w') as f:
                 f.write(content)
 
@@ -121,8 +137,8 @@ class IacScanner:
 
             # Write all files
             for filename, content in files.items():
-                # Handle nested paths
-                file_path = os.path.join(scan_dir, filename)
+                # Handle nested paths (sanitized — never escapes scan_dir)
+                file_path = _safe_join(scan_dir, filename)
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 with open(file_path, 'w') as f:
                     f.write(content)
@@ -166,20 +182,31 @@ class IacScanner:
         try:
             os.makedirs(scan_dir, exist_ok=True)
 
-            # Prepare git URL with token if provided
-            if token:
-                # Insert token into URL
-                if repo_url.startswith("https://"):
-                    repo_url = repo_url.replace("https://", f"https://oauth2:{token}@")
-                elif repo_url.startswith("http://"):
-                    repo_url = repo_url.replace("http://", f"http://oauth2:{token}@")
+            # `safe_url` (no credentials) is what we log and return — assigned
+            # first so the except handlers below can always reference it.
+            safe_url = repo_url
+            clone_url = repo_url
 
-            # Clone repository
+            # Only http(s) — block git transport smuggling (file://, ext::sh,
+            # ssh://, git://) which can lead to RCE/local-file-read via git.
+            if not repo_url.startswith(("https://", "http://")):
+                raise ValueError("Only http(s) repository URLs are allowed")
+
+            # clone_url carries the token only for the clone call itself — the
+            # token must never leak into responses/logs.
+            if token:
+                if repo_url.startswith("https://"):
+                    clone_url = repo_url.replace("https://", f"https://oauth2:{token}@", 1)
+                else:
+                    clone_url = repo_url.replace("http://", f"http://oauth2:{token}@", 1)
+
+            # Clone repository ( -- stops a '-'-leading URL being read as a flag)
             clone_cmd = [
                 "git", "clone",
                 "--depth", "1",
                 "--branch", branch,
-                repo_url,
+                "--",
+                clone_url,
                 scan_dir
             ]
 
@@ -191,7 +218,10 @@ class IacScanner:
             )
 
             if result.returncode != 0:
-                raise Exception(f"Git clone failed: {result.stderr}")
+                err = result.stderr
+                if token:
+                    err = err.replace(token, "***")
+                raise Exception(f"Git clone failed: {err}")
 
             # If specific paths provided, scan only those
             target_dir = scan_dir
@@ -201,9 +231,9 @@ class IacScanner:
                 os.makedirs(filtered_dir, exist_ok=True)
 
                 for path in paths:
-                    src = os.path.join(scan_dir, path)
+                    src = _safe_join(scan_dir, path)
                     if os.path.exists(src):
-                        dst = os.path.join(filtered_dir, path)
+                        dst = _safe_join(filtered_dir, path)
                         os.makedirs(os.path.dirname(dst), exist_ok=True)
                         if os.path.isfile(src):
                             shutil.copy2(src, dst)
@@ -213,16 +243,16 @@ class IacScanner:
                 target_dir = filtered_dir
 
             # Run scan
-            return self._run_trivy_scan(scan_id, target_dir, f"repo:{repo_url}")
+            return self._run_trivy_scan(scan_id, target_dir, f"repo:{safe_url}")
 
         except subprocess.TimeoutExpired:
-            logger.error(f"Git clone timeout for {repo_url}")
+            logger.error("Git clone timeout", repo=safe_url)
             return IacScanResult(
                 scan_id=scan_id,
                 status="failed",
                 scanned_at=datetime.now(timezone.utc).isoformat(),
                 scan_type=scan_type.value,
-                source=f"repo:{repo_url}",
+                source=f"repo:{safe_url}",
                 summary={"critical": 0, "high": 0, "medium": 0, "low": 0},
                 findings=[],
                 files_scanned=0,
@@ -235,7 +265,7 @@ class IacScanner:
                 status="failed",
                 scanned_at=datetime.now(timezone.utc).isoformat(),
                 scan_type=scan_type.value,
-                source=f"repo:{repo_url}",
+                source=f"repo:{safe_url}",
                 summary={"critical": 0, "high": 0, "medium": 0, "low": 0},
                 findings=[],
                 files_scanned=0,

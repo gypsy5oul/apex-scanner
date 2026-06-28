@@ -294,7 +294,7 @@ services:
       --broker=redis://redis:6379/0
       --basic_auth=${FLOWER_USER:?FLOWER_USER is required}:${FLOWER_PASSWORD:?FLOWER_PASSWORD is required}
     ports:
-      - "${FLOWER_PORT:-5555}:5555"
+      - "127.0.0.1:${FLOWER_PORT:-5555}:5555"
     depends_on:
       redis:
         condition: service_healthy
@@ -320,7 +320,7 @@ services:
       --save 300 10
       --save 60 100
       --maxmemory ${REDIS_MAX_MEMORY:-2gb}
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy volatile-lru
       --tcp-keepalive 300
       --timeout 0
       --tcp-backlog 511
