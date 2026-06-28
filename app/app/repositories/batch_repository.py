@@ -7,8 +7,9 @@ behaviour change. Later phases swap the internals for Postgres.
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
-from app.config import get_redis_client
+from app.config import get_redis_client, settings
 from app import ownership
+from app.db.dual_write import upsert_batch
 
 RECENT_BATCHES_KEY = "recent_batches"
 MAX_RECENT_BATCHES = 2000
@@ -51,10 +52,17 @@ class BatchRepository:
         self.r.hset(self._key(batch_id), mapping=mapping)
         if ttl is not None:
             self.r.expire(self._key(batch_id), ttl)
+        self._dual_write(batch_id)
 
     def save(self, batch_id: str, mapping: Dict[str, Any]) -> None:
         """Merge fields into an existing batch record, leaving TTL intact."""
         self.r.hset(self._key(batch_id), mapping=mapping)
+        self._dual_write(batch_id)
+
+    def _dual_write(self, batch_id: str) -> None:
+        """Phase 2: mirror the full current batch record into Postgres (best-effort)."""
+        if settings.DATABASE_URL:
+            upsert_batch(batch_id, self.get(batch_id))
 
     def record_owner(self, batch_id: str, username: str, ts: Optional[float] = None) -> None:
         """Add the batch to the owner's per-user index (tenancy)."""

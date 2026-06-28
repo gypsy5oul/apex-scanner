@@ -6,9 +6,10 @@ internals for Postgres without changing any caller.
 """
 from typing import List, Optional, Dict, Any
 
-from app.config import get_redis_client
+from app.config import get_redis_client, settings
 from app.trends import scan_redis_keys
 from app import ownership
+from app.db.dual_write import upsert_scan
 
 
 class ScanRepository:
@@ -91,10 +92,17 @@ class ScanRepository:
         self.r.hset(scan_id, mapping=mapping)
         if ttl is not None:
             self.r.expire(scan_id, ttl)
+        self._dual_write(scan_id)
+
+    def _dual_write(self, scan_id: str) -> None:
+        """Phase 2: mirror the full current scan record into Postgres (best-effort)."""
+        if settings.DATABASE_URL:
+            upsert_scan(scan_id, self.get(scan_id))
 
     def save(self, scan_id: str, mapping: Dict[str, Any]) -> None:
         """Merge fields into an existing scan record (hash), leaving TTL intact."""
         self.r.hset(scan_id, mapping=mapping)
+        self._dual_write(scan_id)
 
     def set_status(self, scan_id: str, status: str, error: Optional[str] = None) -> None:
         """Set a scan's status (and optional error) — used for failure markers."""
