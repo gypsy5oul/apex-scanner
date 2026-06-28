@@ -233,7 +233,9 @@ class MultiScannerData(BaseModel):
     """Multi-scanner specific data"""
     scanners_requested: List[str] = Field(default_factory=list, description="Scanners that were attempted")
     scanners_used: List[str] = Field(default_factory=list, description="Scanners that succeeded")
-    scanner_errors: Dict[str, str] = Field(default_factory=dict, description="Errors from failed/disabled scanners")
+    # Values are structured per-scanner errors ({message, category, raw}); some
+    # legacy/disabled-scanner entries are plain strings — accept both.
+    scanner_errors: Dict[str, Any] = Field(default_factory=dict, description="Errors from failed/disabled scanners")
     scan_quality: str = Field("full", description="'full' if all scanners succeeded, 'degraded' if some failed")
     grype_unique: int = Field(0, description="Vulnerabilities found only by Grype")
     trivy_unique: int = Field(0, description="Vulnerabilities found only by Trivy")
