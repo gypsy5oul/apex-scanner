@@ -23,6 +23,10 @@ x-common-env: &common-env
   REDIS_URL: redis://redis:6379/0
   REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
   REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-false}
+  # Postgres (Phase 1). Fully URL-driven so it can be repointed at the org's
+  # centralized Postgres later by changing only this .env value — the bundled
+  # `postgres` service is an interim, throwaway home.
+  DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-apex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-apex}}
   SERVER_HOST: ${SERVER_HOST:?SERVER_HOST is required}
   SCAN_TIMEOUT: ${SCAN_TIMEOUT:-900}
   SCAN_RESULT_TTL: ${SCAN_RESULT_TTL:-2592000}
@@ -62,6 +66,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       <<: [*common-env, *auth-env]
       ENABLE_METRICS: "true"
@@ -100,6 +106,8 @@ services:
       --max-tasks-per-child=50
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     environment:
       <<: *common-env
@@ -144,6 +152,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       <<: *common-env
       WORKER_TYPE: batch
@@ -184,6 +194,8 @@ services:
       --max-tasks-per-child=200
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     environment:
       <<: *common-env
@@ -298,6 +310,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       <<: *common-env
     restart: unless-stopped
@@ -344,6 +358,38 @@ services:
           cpus: '0.5'
           memory: 512M
 
+  # Postgres (Phase 1 of the datastore migration). INTERIM/throwaway home —
+  # will be repointed at the org's centralized Postgres via DATABASE_URL later.
+  postgres:
+    image: "postgres:16-alpine"
+    container_name: apex_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-apex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-apex}
+      # keep PGDATA in a subdir so the volume root can hold other files cleanly
+      PGDATA: /var/lib/postgresql/data/pgdata
+    # No host port binding (like redis) — the app reaches it over the compose
+    # network as postgres:5432; admin/psql/pg_dump go via `docker exec
+    # apex_postgres ...`. Avoids host-port conflicts and keeps it off the host.
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-apex} -d ${POSTGRES_DB:-apex}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
   dashboard:
     build:
       context: ../dashboard
@@ -366,4 +412,6 @@ networks:
 
 volumes:
   redis-data:
+    driver: local
+  pg-data:
     driver: local

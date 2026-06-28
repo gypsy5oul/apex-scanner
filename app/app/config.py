@@ -18,6 +18,14 @@ class Settings(BaseSettings):
         default="redis://redis:6379/0",
         description="Redis connection URL"
     )
+    # Postgres (Phase 1). Env-driven so it can repoint at the centralized
+    # Postgres later without code changes. Empty => DB layer stays dormant.
+    DATABASE_URL: str = Field(
+        default="",
+        description="Async SQLAlchemy Postgres URL (postgresql+asyncpg://...)"
+    )
+    DB_POOL_SIZE: int = Field(default=10, description="SQLAlchemy connection pool size")
+    DB_MAX_OVERFLOW: int = Field(default=20, description="SQLAlchemy max overflow connections")
     REDIS_MAX_CONNECTIONS: int = Field(
         default=50,
         description="Maximum Redis connection pool size"

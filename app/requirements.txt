@@ -72,3 +72,8 @@ fakeredis==2.21.0
 
 # Required for OIDC RS256 ID-token validation (PyJWT asymmetric algorithms)
 cryptography==42.0.8
+
+# Postgres (Phase 1 datastore migration) — async SQLAlchemy + driver + migrations
+SQLAlchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
