@@ -6,7 +6,8 @@ the worker, read in the API) — verbatim, no behaviour change.
 import json
 from typing import Optional, Dict, Any
 
-from app.config import get_redis_client
+from app.config import get_redis_client, settings
+from app.db.dual_write import upsert_license
 
 
 class LicenseRepository:
@@ -31,3 +32,5 @@ class LicenseRepository:
     def save(self, scan_id: str, data: Dict[str, Any], ttl: int) -> None:
         """Persist a scan's license result (JSON-encoded) with a TTL."""
         self.r.set(self._key(scan_id), json.dumps(data), ex=ttl)
+        if settings.DATABASE_URL:
+            upsert_license(scan_id, data)
