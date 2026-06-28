@@ -18,6 +18,7 @@ from app.tasks import scan_image, batch_scan_images
 from app.config import settings, get_redis_client
 from app.auth import get_current_user, get_current_admin, TokenData
 from app import ownership
+from app.repositories import ScanRepository
 from app.logging_config import get_logger, LogContext
 from app.metrics import (
     SCANS_TOTAL, SCANS_IN_PROGRESS, BATCH_SCANS_TOTAL, BATCH_SIZE,
@@ -725,7 +726,7 @@ async def get_scan_result(
 
     with LogContext(scan_id=scan_id, operation="get_result"):
         try:
-            result = redis_client.hgetall(scan_id)
+            result = ScanRepository(redis_client).get(scan_id)
             if not result:
                 logger.warning("Scan not found", scan_id=scan_id)
                 raise HTTPException(status_code=404, detail="Scan not found")
@@ -1109,7 +1110,7 @@ async def get_recent_scans(
             for scan_ids in history_results:
                 all_scan_ids.extend(scan_ids)
         else:
-            all_scan_ids = ownership.user_scan_ids(redis_client, _user.username, limit * 3)
+            all_scan_ids = ScanRepository(redis_client).user_ids(_user.username, limit * 3)
 
         if not all_scan_ids:
             return {"scans": [], "total": 0}
@@ -1156,25 +1157,19 @@ async def get_recent_scans(
 async def get_stats(_user: TokenData = Depends(get_current_user)):
     """Get scanner statistics"""
     redis_client = get_redis_client()
+    scans = ScanRepository(redis_client)
 
     if _user.role == "admin":
-        unique_images = len(scan_redis_keys(redis_client, "history:*", count=200))
+        unique_images = scans.unique_image_count()
         try:
             from app.worker_monitor import get_monitor
             total_scans = get_monitor().get_task_stats().get("total_scans", 0)
         except Exception:
             total_scans = 0
     else:
-        ids = ownership.user_scan_ids(redis_client, _user.username)
+        ids = scans.user_ids(_user.username)
         total_scans = len(ids)
-        images = set()
-        if ids:
-            pipe = redis_client.pipeline()
-            for sid in ids:
-                pipe.hget(sid, "image_name")
-            for name in pipe.execute():
-                if name:
-                    images.add(name)
+        images = set(scans.image_names_for(ids))
         unique_images = len(images)
 
     return {
