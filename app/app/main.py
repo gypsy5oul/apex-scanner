@@ -3,15 +3,17 @@ FastAPI application entry point with Prometheus metrics integration
 """
 import json
 import os
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.routes import router
 from app.routes_v2 import router_v2
 from app.config import settings, get_redis_client
-from app.auth import validate_credentials_or_die
+from app.auth import (
+    validate_credentials_or_die, verify_token, validate_api_key, AUTH_COOKIE_NAME,
+)
 from app.logging_config import configure_logging, get_logger
 
 # Configure structured logging
@@ -98,14 +100,48 @@ if settings.ENABLE_METRICS:
 os.makedirs(settings.REPORTS_DIR, exist_ok=True)
 os.makedirs(settings.SBOMS_DIR, exist_ok=True)
 
-# Mount static file directories
-if os.path.exists(settings.REPORTS_DIR):
-    app.mount("/reports", StaticFiles(directory=settings.REPORTS_DIR), name="reports")
-    logger.info("Mounted reports directory", path=settings.REPORTS_DIR)
+# Reports & SBOMs are served behind authentication (previously public static
+# mounts). Any AUTHENTICATED user may view any report/SBOM — so a shared report
+# URL works for a colleague *after they log in*, but is not readable by the
+# public. (Deliberately NOT per-tenant: reports are shareable among logged-in
+# users.) Browsers without a session are redirected to /login; API clients
+# (bearer / X-API-Key) get 401.
+def _report_user(request: Request):
+    """Resolve the caller from cookie, bearer, or API key — or None."""
+    cookie_tok = request.cookies.get(AUTH_COOKIE_NAME)
+    if cookie_tok and verify_token(cookie_tok):
+        return True
+    authz = request.headers.get("authorization", "")
+    if authz.lower().startswith("bearer ") and verify_token(authz[7:].strip()):
+        return True
+    api_key = request.headers.get("x-api-key")
+    if api_key and settings.API_KEY_ENABLED and validate_api_key(api_key):
+        return True
+    return False
 
-if os.path.exists(settings.SBOMS_DIR):
-    app.mount("/sboms", StaticFiles(directory=settings.SBOMS_DIR), name="sboms")
-    logger.info("Mounted SBOMs directory", path=settings.SBOMS_DIR)
+
+def _serve_protected(directory: str, filename: str, request: Request):
+    if not _report_user(request):
+        if "text/html" in request.headers.get("accept", ""):
+            return RedirectResponse(url="/login", status_code=302)
+        raise HTTPException(status_code=401, detail="Authentication required")
+    base = os.path.realpath(directory)
+    full = os.path.realpath(os.path.join(base, filename))
+    if full != base and not full.startswith(base + os.sep):
+        raise HTTPException(status_code=404, detail="Not found")
+    if not os.path.isfile(full):
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(full)
+
+
+@app.get("/reports/{filename:path}", include_in_schema=False)
+async def serve_report(filename: str, request: Request):
+    return _serve_protected(settings.REPORTS_DIR, filename, request)
+
+
+@app.get("/sboms/{filename:path}", include_in_schema=False)
+async def serve_sbom(filename: str, request: Request):
+    return _serve_protected(settings.SBOMS_DIR, filename, request)
 
 # Include API routers
 app.include_router(router)
