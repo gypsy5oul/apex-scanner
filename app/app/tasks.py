@@ -1751,3 +1751,26 @@ def scan_iac_repo(self, repo_url: str, branch: str = "main",
         "findings": result.findings,
         "error": result.error,
     }
+
+
+@celery.task(bind=True, name='scan_iac_files', queue='default')
+def scan_iac_files(self, files: Dict[str, str]) -> Dict[str, Any]:
+    """Scan multiple IaC files for misconfigurations.
+
+    Runs on the worker (which has trivy) rather than inline in the API process.
+    Reuses iac_scanner.scan_multiple_files, whose filenames are sanitized
+    (no path traversal out of the scan sandbox).
+    """
+    from app.iac_scanner import iac_scanner
+
+    result = iac_scanner.scan_multiple_files(files=files)
+    return {
+        "scan_id": result.scan_id,
+        "status": result.status,
+        "scanned_at": result.scanned_at,
+        "source": result.source,
+        "files_scanned": result.files_scanned,
+        "summary": result.summary,
+        "findings": result.findings,
+        "error": result.error,
+    }

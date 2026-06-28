@@ -2031,8 +2031,12 @@ async def iac_scan_content_endpoint(request: IacScanRequest = Body(...), _user: 
     tags=["iac"]
 )
 async def scan_iac_files(request: IacMultiFileRequest = Body(...), _user: TokenData = Depends(get_current_user)):
-    """Scan multiple IaC files for misconfigurations"""
-    from app.iac_scanner import iac_scanner
+    """Scan multiple IaC files for misconfigurations (runs on the worker).
+
+    The API process has no trivy binary, so the scan is dispatched to a Celery
+    task — mirroring /iac/scan/content and /iac/scan/repo.
+    """
+    from app.tasks import scan_iac_files as scan_iac_files_task
 
     if not request.files:
         raise HTTPException(status_code=400, detail="No files provided")
@@ -2040,18 +2044,20 @@ async def scan_iac_files(request: IacMultiFileRequest = Body(...), _user: TokenD
     if len(request.files) > 50:
         raise HTTPException(status_code=400, detail="Maximum 50 files per request")
 
-    result = iac_scanner.scan_multiple_files(files=request.files)
-
-    return {
-        "scan_id": result.scan_id,
-        "status": result.status,
-        "scanned_at": result.scanned_at,
-        "source": result.source,
-        "files_scanned": result.files_scanned,
-        "summary": result.summary,
-        "findings": result.findings,
-        "error": result.error
-    }
+    task = scan_iac_files_task.apply_async(args=[request.files], queue='default')
+    try:
+        return task.get(timeout=120)
+    except Exception as e:
+        return {
+            "scan_id": task.id,
+            "status": "failed",
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
+            "source": f"files:{len(request.files)} files",
+            "files_scanned": 0,
+            "summary": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+            "findings": [],
+            "error": str(e),
+        }
 
 
 @router_v2.post(
