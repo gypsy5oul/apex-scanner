@@ -25,18 +25,36 @@ class BatchRepository:
     def _key(batch_id: str) -> str:
         return f"batch:{batch_id}"
 
+    def _pg(self) -> bool:
+        return bool(settings.DATABASE_URL and settings.READ_FROM_POSTGRES)
+
     # ---- reads -------------------------------------------------------
     def get(self, batch_id: str) -> Dict[str, Any]:
         """Return the batch hash, or an empty dict if it doesn't exist."""
+        if self._pg():
+            from app.db.read_pg import read_batch_detail
+            detail = read_batch_detail(batch_id)
+            if detail:
+                return detail
         return self.r.hgetall(self._key(batch_id))
 
     def recent_ids(self, limit: Optional[int] = None) -> List[str]:
         """Global recent batch ids (admin view), newest-first."""
+        if self._pg():
+            from app.db.read_pg import read_recent_batch_ids
+            ids = read_recent_batch_ids(limit)
+            if ids is not None:
+                return ids
         end = (limit - 1) if limit else -1
         return self.r.zrevrange(RECENT_BATCHES_KEY, 0, end)
 
     def user_ids(self, username: str, limit: Optional[int] = None) -> List[str]:
         """Batch ids owned by ``username`` (per-user index), newest-first."""
+        if self._pg():
+            from app.db.read_pg import read_user_batch_ids
+            ids = read_user_batch_ids(username, limit)
+            if ids is not None:
+                return ids
         return ownership.user_batch_ids(self.r, username, limit)
 
     def visible_ids(self, user, limit: Optional[int] = None) -> List[str]:

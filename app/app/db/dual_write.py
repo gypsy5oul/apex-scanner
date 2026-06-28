@@ -88,6 +88,7 @@ def batch_row(batch_id: str, h: Dict[str, Any]) -> Dict[str, Any]:
         "total_images": _int(h.get("total_images")),
         "status": h.get("status"),
         "image_list": _json(h.get("images"), []),
+        "detail": h,
     }
 
 

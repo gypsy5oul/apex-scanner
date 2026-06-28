@@ -159,6 +159,43 @@ def read_all_vuln_scan_ids() -> Optional[List[str]]:
     return _run(q)
 
 
+# ---- batches ----------------------------------------------------------
+def read_batch_detail(batch_id: str) -> Optional[Dict[str, Any]]:
+    def q(s):
+        from sqlalchemy import select
+        from app.db.models import Batch
+        return s.execute(select(Batch.detail).where(Batch.id == batch_id)).scalar_one_or_none()
+    return _run(q)
+
+
+def _order_batch():
+    from sqlalchemy.sql import desc, nullslast
+    from app.db.models import Batch
+    return nullslast(desc(Batch.created_at))
+
+
+def read_recent_batch_ids(limit: Optional[int]) -> Optional[List[str]]:
+    def q(s):
+        from sqlalchemy import select
+        from app.db.models import Batch
+        stmt = select(Batch.id).order_by(_order_batch())
+        if limit:
+            stmt = stmt.limit(limit)
+        return [r[0] for r in s.execute(stmt).all()]
+    return _run(q)
+
+
+def read_user_batch_ids(username: str, limit: Optional[int]) -> Optional[List[str]]:
+    def q(s):
+        from sqlalchemy import select
+        from app.db.models import Batch
+        stmt = select(Batch.id).where(Batch.created_by == username).order_by(_order_batch())
+        if limit:
+            stmt = stmt.limit(limit)
+        return [r[0] for r in s.execute(stmt).all()]
+    return _run(q)
+
+
 # ---- licenses ---------------------------------------------------------
 def read_license_data(scan_id: str) -> Optional[Dict[str, Any]]:
     def q(s):
