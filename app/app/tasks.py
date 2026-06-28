@@ -19,6 +19,7 @@ from app.license_compliance import evaluate as evaluate_licenses, to_dict as lic
 from app.logging_config import get_logger, configure_logging, LogContext
 from app.trends import TrendAnalyzer
 from app import ownership
+from app.repositories import ScanRepository
 from app.metrics import (
     SCANS_IN_PROGRESS, SCANS_COMPLETED, SCAN_DURATION,
     VULNERABILITIES_FOUND, SECRETS_FOUND, PACKAGES_FOUND,
@@ -641,8 +642,7 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = True) -> 
                             cached_data["cached_from"] = cached_scan_id
                             cached_data["cache_hit"] = "true"
                             cached_data["scan_timestamp"] = now_iso()
-                            redis_client.hset(scan_id, mapping=cached_data)
-                            redis_client.expire(scan_id, settings.SCAN_RESULT_TTL)
+                            ScanRepository(redis_client).create(scan_id, cached_data, ttl=settings.SCAN_RESULT_TTL)
 
                             # Copy vulnerabilities
                             vulns = redis_client.get(f"vulns:{cached_scan_id}")
@@ -685,7 +685,7 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = True) -> 
                     summary=merged_results.get('summary', {}),
                     raw_errors=scanners_failed,
                 )
-                redis_client.hset(scan_id, mapping={
+                ScanRepository(redis_client).save(scan_id, {
                     "status": "failed",
                     "error": friendly_summary,
                     "scanner_errors": json.dumps(friendly_per_scanner),
@@ -721,7 +721,7 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = True) -> 
                     scan_id=scan_id,
                     raw_errors=scanners_failed,
                 )
-                redis_client.hset(scan_id, mapping={
+                ScanRepository(redis_client).save(scan_id, {
                     "status": "failed",
                     "error": friendly_summary,
                     "scanner_errors": json.dumps(friendly_per_scanner),
@@ -780,7 +780,7 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = True) -> 
             if not html_report:
                 error_msg = "Failed to generate HTML report"
                 logger.error(error_msg, scan_id=scan_id)
-                redis_client.hset(scan_id, mapping={"status": "failed", "error": error_msg})
+                ScanRepository(redis_client).set_status(scan_id, "failed", error_msg)
                 SCANS_COMPLETED.labels(status='failure', scanner='report').inc()
                 SCANS_IN_PROGRESS.dec()
                 return {"scan_id": scan_id, "status": "failed", "error": error_msg}
@@ -926,7 +926,7 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = True) -> 
                 ),
             }
 
-            redis_client.hset(scan_id, mapping=redis_result)
+            ScanRepository(redis_client).save(scan_id, redis_result)
 
             # Record trend metrics so the Trends dashboard has historical data.
             # Best-effort: a bookkeeping failure must never fail the scan itself.
@@ -1003,7 +1003,7 @@ def scan_image(self, image_name: str, scan_id: str, skip_cache: bool = True) -> 
                 traceback=traceback.format_exc()
             )
 
-            redis_client.hset(scan_id, mapping={"status": "failed", "error": error_msg})
+            ScanRepository(redis_client).set_status(scan_id, "failed", error_msg)
             SCANS_COMPLETED.labels(status='failure', scanner='exception').inc()
 
             # Retry on transient errors. Do NOT decrement the gauge here — the
@@ -1079,7 +1079,7 @@ def batch_scan_images(
                 })
                 # Mark the individual scan hash so the status endpoint
                 # surfaces the dispatch failure instead of "in_progress".
-                redis_client.hset(scan_id, mapping={
+                ScanRepository(redis_client).save(scan_id, {
                     "status": "failed",
                     "error": f"Failed to enqueue scan: {e}",
                     "image_name": image_name,
@@ -1148,14 +1148,13 @@ def scan_base_images(self, batch_size: int = 5) -> Dict[str, Any]:
             )
 
             # Initialize scan in Redis
-            thread_redis.hset(scan_id, mapping={
+            ScanRepository(thread_redis).create(scan_id, {
                 "status": "in_progress",
                 "image_name": image_name,
                 "created_at": now_iso(),
                 "scan_type": "base_image",
                 ownership.OWNER_FIELD: "system",
-            })
-            thread_redis.expire(scan_id, settings.SCAN_RESULT_TTL)
+            }, ttl=settings.SCAN_RESULT_TTL)
 
             # Track in image history index (for Recent Scans display)
             history_key = f"history:{image_name}"
@@ -1204,8 +1203,7 @@ def scan_base_images(self, batch_size: int = 5) -> Dict[str, Any]:
                 error=str(e)
             )
             # Mark as failed in Redis
-            thread_redis.hset(scan_id, "status", "failed")
-            thread_redis.hset(scan_id, "error", str(e))
+            ScanRepository(thread_redis).set_status(scan_id, "failed", str(e))
             return {
                 "image": image_name,
                 "scan_id": scan_id,

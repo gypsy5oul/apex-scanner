@@ -92,6 +92,17 @@ class ScanRepository:
         if ttl is not None:
             self.r.expire(scan_id, ttl)
 
+    def save(self, scan_id: str, mapping: Dict[str, Any]) -> None:
+        """Merge fields into an existing scan record (hash), leaving TTL intact."""
+        self.r.hset(scan_id, mapping=mapping)
+
+    def set_status(self, scan_id: str, status: str, error: Optional[str] = None) -> None:
+        """Set a scan's status (and optional error) — used for failure markers."""
+        mapping: Dict[str, Any] = {"status": status}
+        if error is not None:
+            mapping["error"] = error
+        self.r.hset(scan_id, mapping=mapping)
+
     def record_owner(self, scan_id: str, username: str, ts: Optional[float] = None) -> None:
         """Add the scan to the owner's per-user index (tenancy)."""
         ownership.record_scan_owner(self.r, scan_id, username, ts)
