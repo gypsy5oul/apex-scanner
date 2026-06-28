@@ -20,7 +20,15 @@ class ScanRepository:
 
     # ---- single scan -------------------------------------------------
     def get(self, scan_id: str) -> Dict[str, Any]:
-        """Return the scan hash, or an empty dict if it doesn't exist."""
+        """Return the scan hash, or an empty dict if it doesn't exist.
+
+        Phase 3: when READ_FROM_POSTGRES is on, read from Postgres (the dual-write
+        mirror) and fall back to Redis on a miss. Redis stays the safety net."""
+        if settings.DATABASE_URL and settings.READ_FROM_POSTGRES:
+            from app.db.read_pg import read_scan_detail
+            detail = read_scan_detail(scan_id)
+            if detail:
+                return detail
         return self.r.hgetall(scan_id)
 
     def exists(self, scan_id: str) -> bool:
@@ -95,9 +103,12 @@ class ScanRepository:
         self._dual_write(scan_id)
 
     def _dual_write(self, scan_id: str) -> None:
-        """Phase 2: mirror the full current scan record into Postgres (best-effort)."""
+        """Phase 2: mirror the full current scan record into Postgres (best-effort).
+
+        Reads the source straight from Redis (NOT self.get(), which may now read
+        from Postgres) — Redis is authoritative and is what we're mirroring."""
         if settings.DATABASE_URL:
-            upsert_scan(scan_id, self.get(scan_id))
+            upsert_scan(scan_id, self.r.hgetall(scan_id))
 
     def save(self, scan_id: str, mapping: Dict[str, Any]) -> None:
         """Merge fields into an existing scan record (hash), leaving TTL intact."""

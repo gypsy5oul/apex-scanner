@@ -60,9 +60,12 @@ class BatchRepository:
         self._dual_write(batch_id)
 
     def _dual_write(self, batch_id: str) -> None:
-        """Phase 2: mirror the full current batch record into Postgres (best-effort)."""
+        """Phase 2: mirror the full current batch record into Postgres (best-effort).
+
+        Reads the source straight from Redis (NOT self.get(), which may now read
+        from Postgres) — Redis is authoritative and is what we're mirroring."""
         if settings.DATABASE_URL:
-            upsert_batch(batch_id, self.get(batch_id))
+            upsert_batch(batch_id, self.r.hgetall(self._key(batch_id)))
 
     def record_owner(self, batch_id: str, username: str, ts: Optional[float] = None) -> None:
         """Add the batch to the owner's per-user index (tenancy)."""

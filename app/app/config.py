@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     )
     DB_POOL_SIZE: int = Field(default=10, description="SQLAlchemy connection pool size")
     DB_MAX_OVERFLOW: int = Field(default=20, description="SQLAlchemy max overflow connections")
+    # Phase 3: when true, repositories read from Postgres (with a Redis fallback
+    # on miss). Flip per-deploy once a parity check passes; reversible.
+    READ_FROM_POSTGRES: bool = Field(
+        default=False,
+        description="Read durable data from Postgres instead of Redis (Phase 3)"
+    )
     REDIS_MAX_CONNECTIONS: int = Field(
         default=50,
         description="Maximum Redis connection pool size"
