@@ -1,0 +1,39 @@
+# CRITICAL: keep secrets and build junk OUT of image layers.
+# Both Dockerfile.api and Dockerfile.worker do `COPY . /app` with this dir as
+# the build context, so without these excludes app/.env (JWT signing key, admin
+# password hash, Redis/Postgres passwords, OIDC client secret, GitLab PAT) is
+# baked into every published image layer and recoverable via `docker history`
+# or a registry pull. Secrets must only ever be injected at runtime.
+.env
+.env.*
+!.env.example
+
+# VCS / CI
+.git
+.gitignore
+.gitlab-ci.yml
+
+# Tests & caches (not needed at runtime, and they bloat layers)
+tests/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.coverage
+htmlcov/
+
+# Local tooling / editor state
+.claude/
+.superpowers/
+.idea/
+.vscode/
+
+# Certs & keys must never be copied in
+*.pem
+*.key
+*.crt
+*.p12
+
+# Docs & compose (runtime doesn't need them)
+docs/
+docker-compose*.yml

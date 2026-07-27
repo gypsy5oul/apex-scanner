@@ -1,0 +1,174 @@
+# APEX CI/CD — gitlab.sixdee/devops/apex-scanner
+#
+# Design constraints (verified against this GitLab instance, 15.3.1):
+#   * Runners here are shell/host-docker executors — the house pattern (see
+#     devops/base-image-builder) uses raw `docker build`/`docker push` and never
+#     sets `image:`. So every job runs commands through `docker run` instead of
+#     relying on a job container.
+#   * No external image pulls are required by validate/build/test: tests execute
+#     inside the API image we just built (it already carries all Python deps),
+#     and the self-scan uses the Trivy binary inside our own worker image.
+#   * Publishing is manual and only runs when REGISTRY_URL is configured, so the
+#     pipeline is useful immediately even before registry creds are wired.
+#
+# Closes review findings: "zero CI/CD", "no test gate", "no secret scanning",
+# "no image scanning (ironic for a vuln scanner)", "no immutable artifacts /
+# no rollback target".
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_MESSAGE =~ /\[skip ci\]/
+      when: never
+    - when: always
+
+stages:
+  - validate
+  - build
+  - test
+  - scan
+  - publish
+
+variables:
+  # Immutable, traceable tag for every artifact this pipeline produces.
+  TAG: "$CI_PIPELINE_ID-$CI_COMMIT_SHORT_SHA"
+  IMG_API: "apex-api"
+  IMG_WORKER: "apex-worker"
+  IMG_DASHBOARD: "apex-dashboard"
+  GIT_DEPTH: "0"          # secret scan needs real history, not a 1-commit clone
+
+default:
+  tags:
+    - base-image-builder
+
+# ------------------------------------------------------------------
+# validate — fail fast, no dependencies at all
+# ------------------------------------------------------------------
+secret-scan:
+  stage: validate
+  script:
+    - chmod +x app/scripts/ci-secret-scan.sh
+    - ./app/scripts/ci-secret-scan.sh
+
+compose-lint:
+  stage: validate
+  script:
+    - docker compose -f app/docker-compose.yml config -q || docker-compose -f app/docker-compose.yml config -q
+    - echo "compose config valid"
+
+# ------------------------------------------------------------------
+# build — immutable, SHA-tagged images (the rollback targets)
+# ------------------------------------------------------------------
+build-api:
+  stage: build
+  script:
+    - docker build --pull -f app/Dockerfile.api -t $IMG_API:$TAG app
+    # Prove secrets are NOT baked into the layer (the .dockerignore contract).
+    - |
+      if docker run --rm --entrypoint sh $IMG_API:$TAG -c 'test -f /app/.env'; then
+        echo "FATAL: app/.env is present inside the image — .dockerignore is not doing its job"; exit 1
+      fi
+      echo "verified: no .env inside image"
+
+build-worker:
+  stage: build
+  script:
+    - docker build --pull -f app/Dockerfile.worker -t $IMG_WORKER:$TAG app
+    - |
+      if docker run --rm --entrypoint sh $IMG_WORKER:$TAG -c 'test -f /app/.env'; then
+        echo "FATAL: app/.env is present inside the image"; exit 1
+      fi
+    # Scanner binaries must be present and executable in the shipped image.
+    - docker run --rm --entrypoint sh $IMG_WORKER:$TAG -c 'grype version && trivy --version && syft version'
+
+build-dashboard:
+  stage: build
+  script:
+    - docker build --pull -f dashboard/Dockerfile -t $IMG_DASHBOARD:$TAG dashboard
+
+# ------------------------------------------------------------------
+# test — run the suite inside the built API image (deps already installed)
+# ------------------------------------------------------------------
+pytest:
+  stage: test
+  needs: ["build-api"]
+  script:
+    # tests/ is excluded from the image by .dockerignore, so mount the source
+    # tree and run against the image's pre-installed venv.
+    - mkdir -p .ci && chmod 777 .ci
+    - |
+      docker run --rm \
+        -v "$CI_PROJECT_DIR/app:/src:ro" \
+        -v "$CI_PROJECT_DIR/.ci:/out" \
+        -w /src --entrypoint sh $IMG_API:$TAG -c \
+        'python -m pytest tests -q --junitxml=/out/junit.xml'
+  artifacts:
+    when: always
+    reports:
+      junit: .ci/junit.xml
+    expire_in: 1 week
+  allow_failure: false
+
+# ------------------------------------------------------------------
+# scan — APEX scans APEX (dogfooding; uses Trivy inside our worker image)
+# ------------------------------------------------------------------
+.self-scan: &self_scan
+  stage: scan
+  allow_failure: true      # non-blocking until the Trivy DB mirror is confirmed on runners
+  script:
+    - mkdir -p .scan
+    - docker save $TARGET_IMAGE:$TAG -o .scan/image.tar
+    - |
+      docker run --rm \
+        -v "$CI_PROJECT_DIR/.scan:/scan" \
+        --entrypoint trivy $IMG_WORKER:$TAG \
+        image --input /scan/image.tar \
+        --severity HIGH,CRITICAL --no-progress \
+        --format table
+    - rm -f .scan/image.tar
+
+self-scan-api:
+  <<: *self_scan
+  needs: ["build-api", "build-worker"]
+  variables:
+    TARGET_IMAGE: "apex-api"
+
+self-scan-worker:
+  <<: *self_scan
+  needs: ["build-worker"]
+  variables:
+    TARGET_IMAGE: "apex-worker"
+
+self-scan-dashboard:
+  <<: *self_scan
+  needs: ["build-dashboard", "build-worker"]
+  variables:
+    TARGET_IMAGE: "apex-dashboard"
+
+# ------------------------------------------------------------------
+# publish — manual; requires REGISTRY_URL (+ creds) to be configured
+# ------------------------------------------------------------------
+publish:
+  stage: publish
+  when: manual
+  needs: ["pytest", "build-worker", "build-dashboard"]
+  rules:
+    - if: $REGISTRY_URL == null || $REGISTRY_URL == ""
+      when: never
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+  script:
+    - |
+      if [ -n "${REGISTRY_USER:-}" ]; then
+        echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" -u "$REGISTRY_USER" --password-stdin
+      fi
+    - |
+      for pair in "$IMG_API:apex/api" "$IMG_WORKER:apex/worker" "$IMG_DASHBOARD:apex/dashboard"; do
+        img_name="${pair%%:*}"; remote_path="${pair##*:}"
+        remote="$REGISTRY_URL/$remote_path"
+        docker tag "$img_name:$TAG" "$remote:$TAG"
+        docker tag "$img_name:$TAG" "$remote:latest"
+        docker push "$remote:$TAG"
+        docker push "$remote:latest"
+        echo "pushed $remote:$TAG"
+      done
+    - 'echo "Rollback target for this commit -> $TAG"'
