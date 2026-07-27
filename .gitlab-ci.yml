@@ -27,6 +27,7 @@ stages:
   - test
   - scan
   - publish
+  - deploy
 
 variables:
   # Immutable, traceable tag for every artifact this pipeline produces.
@@ -37,8 +38,13 @@ variables:
   GIT_DEPTH: "0"          # secret scan needs real history, not a 1-commit clone
 
 default:
+  # Dedicated, project-locked runner on the APEX host (10.0.2.121), registered in
+  # the shared gitlab-runner container's config.toml alongside the other house
+  # runners (runner id 116, tag apex-local, run_untagged=false). Docker executor
+  # against the HOST docker socket, with the real deploy dir bind-mounted at its
+  # true path — so builds and the deploy job both act on this server.
   tags:
-    - base-image-builder
+    - apex-local
 
 # ------------------------------------------------------------------
 # validate — fail fast, no dependencies at all
@@ -168,11 +174,18 @@ self-scan-dashboard:
     TARGET_IMAGE: "apex-dashboard"
 
 # ------------------------------------------------------------------
-# publish — manual; requires REGISTRY_URL (+ creds) to be configured
+# publish — push immutable artifacts to Harbor (project: apex)
+#
+# Auth uses a Harbor ROBOT account scoped to push/pull on the apex project only
+# (never the admin account). Its username literally begins with "robot$"; that
+# "$" is written in-script instead of stored in a CI variable, because GitLab
+# expands "$apex" inside variable values. Only the suffix lives in
+# REGISTRY_ROBOT, and the secret is a masked CI variable.
+# Harbor has auto_scan enabled on the project, so every pushed tag is also
+# scanned by Harbor's own Trivy — independent of our in-pipeline self-scan.
 # ------------------------------------------------------------------
 publish:
   stage: publish
-  when: manual
   needs: ["pytest", "build-worker", "build-dashboard"]
   rules:
     - if: $REGISTRY_URL == null || $REGISTRY_URL == ""
@@ -180,18 +193,89 @@ publish:
     - if: $CI_COMMIT_BRANCH == "main"
       when: manual
   script:
+    - echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" -u 'robot$'"$REGISTRY_ROBOT" --password-stdin
     - |
-      if [ -n "${REGISTRY_USER:-}" ]; then
-        echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" -u "$REGISTRY_USER" --password-stdin
-      fi
-    - |
-      for pair in "$IMG_API:apex/api" "$IMG_WORKER:apex/worker" "$IMG_DASHBOARD:apex/dashboard"; do
-        img_name="${pair%%:*}"; remote_path="${pair##*:}"
-        remote="$REGISTRY_URL/$remote_path"
+      REG="$REGISTRY_URL/$REGISTRY_PROJECT"
+      for pair in "$IMG_API=api" "$IMG_WORKER=worker" "$IMG_DASHBOARD=dashboard"; do
+        img_name="${pair%%=*}"; remote_path="${pair##*=}"
+        remote="$REG/$remote_path"
         docker tag "$img_name:$TAG" "$remote:$TAG"
         docker tag "$img_name:$TAG" "$remote:latest"
         docker push "$remote:$TAG"
         docker push "$remote:latest"
         echo "pushed $remote:$TAG"
       done
-    - 'echo "Rollback target for this commit -> $TAG"'
+    - docker logout "$REGISTRY_URL" || true
+    - 'echo "Published. Rollback target for this commit -> $TAG"'
+
+# ------------------------------------------------------------------
+# deploy — roll out the exact published artifacts onto THIS server
+#
+# Runs on the apex-local runner, which bind-mounts /opt/new-grype-scanner-v1 at
+# its real host path. That matters: compose bind-mounts are resolved by the host
+# daemon, and the runtime secrets (app/.env, gitignored) exist only there. We
+# pull the published images and retag them to the names compose expects, then
+# bring the stack up with --no-build — so what runs is exactly what was
+# published and scanned. No rebuild, no drift.
+# ------------------------------------------------------------------
+deploy:
+  stage: deploy
+  needs: ["publish"]
+  environment:
+    name: production
+    url: https://apexscanner.6dcorp.internal
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+  variables:
+    DEPLOY_DIR: /opt/new-grype-scanner-v1
+  script:
+    # NB: quote any script line containing ": " — bare YAML scalars with a colon
+    # are parsed as a mapping and rejected by the CI schema.
+    - 'test -d "$DEPLOY_DIR/app" || { echo "FATAL: $DEPLOY_DIR is not mounted into the runner"; exit 1; }'
+    - 'test -f "$DEPLOY_DIR/app/.env" || { echo "FATAL: app/.env missing on host (runtime secrets live only there)"; exit 1; }'
+    # Never deploy over uncommitted tracked changes on the host checkout.
+    - |
+      dirty=$(git -C "$DEPLOY_DIR" status --porcelain --untracked-files=no)
+      if [ -n "$dirty" ]; then
+        echo "FATAL: $DEPLOY_DIR has uncommitted tracked changes — refusing to deploy:"; echo "$dirty"; exit 1
+      fi
+    # Fast-forward the host checkout to exactly this commit (never a hard reset).
+    # Fetch from the job's own clone rather than the remote: both paths are
+    # visible inside the job container, so this needs no git credentials.
+    - git -C "$DEPLOY_DIR" fetch "$CI_PROJECT_DIR" "$CI_COMMIT_SHA"
+    - git -C "$DEPLOY_DIR" merge --ff-only FETCH_HEAD
+    - git -C "$DEPLOY_DIR" log --oneline -1
+    - echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" -u 'robot$'"$REGISTRY_ROBOT" --password-stdin
+    - |
+      REG="$REGISTRY_URL/$REGISTRY_PROJECT"
+      docker pull "$REG/api:$TAG"
+      docker pull "$REG/worker:$TAG"
+      docker pull "$REG/dashboard:$TAG"
+      # Retag to the image names compose would otherwise build.
+      docker tag "$REG/api:$TAG"       app-api:latest
+      docker tag "$REG/worker:$TAG"    app-worker-high:latest
+      docker tag "$REG/worker:$TAG"    app-worker-batch:latest
+      docker tag "$REG/worker:$TAG"    app-worker-system:latest
+      docker tag "$REG/dashboard:$TAG" app-dashboard:latest
+    - docker logout "$REGISTRY_URL" || true
+    - |
+      cd "$DEPLOY_DIR/app"
+      COMPOSE="docker compose"
+      docker compose version >/dev/null 2>&1 || COMPOSE="docker-compose"
+      $COMPOSE -f docker-compose.yml -f docker-compose.edge.yml up -d --no-build
+    # Schema migrations are idempotent; run after the new image is live.
+    - docker exec -w /app fastapi_scanner alembic upgrade head
+    # The edge caches upstream container IPs at startup, so recreated containers
+    # 502 until nginx is reloaded (seen repeatedly during manual deploys).
+    - docker exec apexscanner_edge nginx -s reload
+    - |
+      code=000
+      for i in $(seq 1 12); do
+        code=$(docker exec fastapi_scanner python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:8000/health',timeout=5).status)" 2>/dev/null || echo 000)
+        echo "health attempt $i -> $code"
+        [ "$code" = "200" ] && break
+        sleep 5
+      done
+      [ "$code" = "200" ] || { echo "FATAL: API unhealthy after deploy"; exit 1; }
+    - 'echo "Deployed $TAG on 10.0.2.121. Rollback -> re-run deploy on the previous good pipeline."'
