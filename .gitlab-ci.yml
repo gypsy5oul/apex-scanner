@@ -55,12 +55,17 @@ compose-lint:
   # refuses to interpolate without them. These placeholders exist only to
   # validate file STRUCTURE in CI — nothing is started, and real values always
   # come from the gitignored app/.env at deploy time.
+  # Full set of `${VAR:?...}` required vars across docker-compose.yml and
+  # docker-compose.edge.yml (kept in sync via:
+  #   grep -ohE '\$\{[A-Z_]+:\?[^}]*\}' app/docker-compose*.yml | sed -E 's/.*\{([A-Z_]+):\?.*/\1/' | sort -u )
   variables:
-    REDIS_PASSWORD: "ci-lint-placeholder"
-    POSTGRES_PASSWORD: "ci-lint-placeholder"
-    JWT_SECRET_KEY: "ci-lint-placeholder"
-    ADMIN_USERNAME: "ci-lint"
     ADMIN_PASSWORD_HASH: "ci-lint-placeholder"
+    ADMIN_USERNAME: "ci-lint"
+    FLOWER_PASSWORD: "ci-lint-placeholder"
+    FLOWER_USER: "ci-lint"
+    JWT_SECRET_KEY: "ci-lint-placeholder"
+    POSTGRES_PASSWORD: "ci-lint-placeholder"
+    REDIS_PASSWORD: "ci-lint-placeholder"
     SERVER_HOST: "http://ci-lint.invalid"
   script:
     - |
