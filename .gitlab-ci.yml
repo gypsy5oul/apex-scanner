@@ -51,9 +51,27 @@ secret-scan:
 
 compose-lint:
   stage: validate
+  # The compose file declares required vars with `${VAR:?...}`, so `config`
+  # refuses to interpolate without them. These placeholders exist only to
+  # validate file STRUCTURE in CI — nothing is started, and real values always
+  # come from the gitignored app/.env at deploy time.
+  variables:
+    REDIS_PASSWORD: "ci-lint-placeholder"
+    POSTGRES_PASSWORD: "ci-lint-placeholder"
+    JWT_SECRET_KEY: "ci-lint-placeholder"
+    ADMIN_USERNAME: "ci-lint"
+    ADMIN_PASSWORD_HASH: "ci-lint-placeholder"
+    SERVER_HOST: "http://ci-lint.invalid"
   script:
-    - docker compose -f app/docker-compose.yml config -q || docker-compose -f app/docker-compose.yml config -q
-    - echo "compose config valid"
+    - |
+      if docker compose version >/dev/null 2>&1; then
+        docker compose -f app/docker-compose.yml config -q
+        docker compose -f app/docker-compose.yml -f app/docker-compose.edge.yml config -q
+      else
+        docker-compose -f app/docker-compose.yml config -q
+        docker-compose -f app/docker-compose.yml -f app/docker-compose.edge.yml config -q
+      fi
+    - echo "compose config valid (base + edge overlay)"
 
 # ------------------------------------------------------------------
 # build — immutable, SHA-tagged images (the rollback targets)
