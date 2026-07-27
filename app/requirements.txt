@@ -66,7 +66,7 @@ openai>=1.50.0
 
 # Testing
 pytest==8.0.0
-pytest-asyncio==0.23.3
+pytest-asyncio==0.23.8
 httpx==0.26.0
 fakeredis==2.21.0
 

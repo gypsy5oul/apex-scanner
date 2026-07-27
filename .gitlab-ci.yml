@@ -123,7 +123,7 @@ pytest:
         -v "$CI_PROJECT_DIR/app:/src:ro" \
         -v "$CI_PROJECT_DIR/.ci:/out" \
         -w /src --entrypoint sh $IMG_API:$TAG -c \
-        'python -m pytest tests -q --junitxml=/out/junit.xml'
+        'python -m pytest tests -q -p no:cacheprovider --junitxml=/out/junit.xml'
   artifacts:
     when: always
     reports:
