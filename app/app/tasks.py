@@ -4,6 +4,7 @@ Includes batch scanning, metrics, and structured logging
 """
 import os
 import json
+import shutil
 import socket
 import traceback
 from celery import Celery
@@ -57,6 +58,12 @@ from kombu import Queue, Exchange
 # Define exchanges
 default_exchange = Exchange('default', type='direct')
 priority_exchange = Exchange('priority', type='direct')
+
+# Age after which a Syft/Grype (stereoscope) scratch dir in /tmp is considered
+# abandoned and safe to delete. Anchored to the Celery hard time limit below
+# (SCAN_TIMEOUT * 3) with a margin, plus a floor for the batch task's own 7500s
+# hard limit — nothing still running can own a dir older than this.
+TMP_SCRATCH_MAX_AGE = max(settings.SCAN_TIMEOUT * 3 + 1800, 9000)
 
 celery.conf.update(
     # Serialization
@@ -1295,7 +1302,11 @@ celery.conf.beat_schedule = {
     },
     'cleanup-old-scan-artifacts': {
         'task': 'cleanup_old_scan_artifacts',
-        'schedule': 86400.0,  # Every 24 hours (in seconds)
+        # Hourly, not daily: report/SBOM retention only needs a daily pass, but
+        # this task also reaps leaked Syft/Grype scratch dirs (~0.5-1 GB each).
+        # At daily cadence a burst of killed scans can add tens of GB before the
+        # next run — that is exactly how /opt reached 98% full.
+        'schedule': 3600.0,  # Every hour (in seconds)
         'options': {'queue': 'system'}
     },
     'reap-stale-scans': {
@@ -1471,7 +1482,7 @@ def cleanup_old_scan_artifacts(self) -> Dict[str, Any]:
         retention_days=retention_days
     )
 
-    deleted = {"reports": 0, "sboms": 0, "tmp_scan_json": 0, "errors": 0}
+    deleted = {"reports": 0, "sboms": 0, "tmp_scan_json": 0, "tmp_scanner_dirs": 0, "errors": 0}
 
     for label, directory in [("reports", settings.REPORTS_DIR), ("sboms", settings.SBOMS_DIR)]:
         if not os.path.isdir(directory):
@@ -1501,10 +1512,37 @@ def cleanup_old_scan_artifacts(self) -> Dict[str, Any]:
             logger.warning("Failed to delete temp scan json", path=filepath, error=str(e))
             deleted["errors"] += 1
 
+    # Syft/Grype (stereoscope) extract every image layer into /tmp working dirs
+    # ~0.5-1 GB each. They are removed when the scanner exits cleanly, but leak
+    # whenever the process is killed — task timeout, worker restart/redeploy, or
+    # a max-tasks-per-child recycle mid-scan. Left alone they are the single
+    # fastest way to fill the disk: 81 leaked dirs put 63 GB into one batch
+    # worker's writable layer and took /opt to 98% full.
+    #
+    # These are reaped on a SHORT clock, not ARTIFACT_RETENTION_DAYS: nothing
+    # older than the hard scan limit (SCAN_TIMEOUT * 3) can still be in use, so
+    # anything past TMP_SCRATCH_MAX_AGE is by definition abandoned.
+    scratch_cutoff = time.time() - TMP_SCRATCH_MAX_AGE
+    for pattern in ("/tmp/stereoscope-*", "/tmp/syft-cataloger-*", "/tmp/getter*"):
+        for path in glob.glob(pattern):
+            try:
+                if os.path.getmtime(path) >= scratch_cutoff:
+                    continue  # possibly still in use by a running scan
+                if os.path.isdir(path):
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    os.remove(path)
+                deleted["tmp_scanner_dirs"] += 1
+            except OSError as e:
+                logger.warning("Failed to delete scanner scratch dir", path=path, error=str(e))
+                deleted["errors"] += 1
+
     logger.info(
         "Artifact cleanup completed",
         deleted_reports=deleted["reports"],
         deleted_sboms=deleted["sboms"],
+        deleted_tmp_scan_json=deleted["tmp_scan_json"],
+        deleted_tmp_scanner_dirs=deleted["tmp_scanner_dirs"],
         errors=deleted["errors"]
     )
 
