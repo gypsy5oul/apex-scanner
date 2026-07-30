@@ -124,6 +124,15 @@ services:
       - /opt/new-grype-scanner-v1/scanner-cache/grype:/home/scanner/.cache/grype
       - /opt/new-grype-scanner-v1/scanner-cache/trivy:/home/scanner/.cache/trivy
       - ${DOCKER_CONFIG_PATH:-./scripts/empty-docker-config.json}:/home/scanner/.docker/config.json:ro
+      # Shared scanner scratch. Syft/Grype unpack every image layer into /tmp
+      # (stereoscope-*, syft-cataloger-*, ~0.5-1 GB each) and leak the dirs
+      # whenever the process is killed mid-scan. Before this mount each worker
+      # had a private writable-layer /tmp, so `cleanup_old_scan_artifacts` —
+      # routed to the `system` queue — only ever globbed worker-system's own
+      # empty /tmp and reaped nothing. 228 GB piled up across the scanning
+      # workers in 46h and took /opt to 97%. One shared dir puts every
+      # worker's scratch where the single reaper can actually see it.
+      - /opt/scanner-tmp:/tmp
     restart: unless-stopped
     logging: *default-logging
     deploy:
@@ -169,6 +178,10 @@ services:
       - /opt/new-grype-scanner-v1/scanner-cache/grype:/home/scanner/.cache/grype
       - /opt/new-grype-scanner-v1/scanner-cache/trivy:/home/scanner/.cache/trivy
       - ${DOCKER_CONFIG_PATH:-./scripts/empty-docker-config.json}:/home/scanner/.docker/config.json:ro
+      # Same shared scratch dir as worker-high — see the note there. Batch
+      # workers leak the most: long scans plus --max-tasks-per-child=100
+      # recycles kill Syft mid-unpack more often than anywhere else.
+      - /opt/scanner-tmp:/tmp
     restart: unless-stopped
     logging: *default-logging
     deploy:
@@ -210,6 +223,11 @@ services:
       # volume the scanning workers read from.
       - /opt/new-grype-scanner-v1/scanner-cache/grype:/home/scanner/.cache/grype
       - /opt/new-grype-scanner-v1/scanner-cache/trivy:/home/scanner/.cache/trivy
+      # MANDATORY, not just symmetry: `cleanup_old_scan_artifacts` runs on the
+      # `system` queue, i.e. inside this container, and globs /tmp literally.
+      # Without this mount it sees only its own empty /tmp and the scanning
+      # workers' leaked scratch is unreachable — which is exactly the bug.
+      - /opt/scanner-tmp:/tmp
     restart: unless-stopped
     logging: *default-logging
     deploy:

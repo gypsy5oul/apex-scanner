@@ -1,0 +1,16 @@
+# APEX disk watchdog — see /opt/new-grype-scanner-v1/app/scripts/check-disk-usage.sh
+#
+# The platform has no deployed monitoring, so a silent scratch-dir leak took
+# /opt from healthy to 97% full twice with nothing noticing until a human
+# looked. Every 15 minutes is well inside the observed fill rate (~228 GB /46h,
+# i.e. ~1.2 GB/min worst case) — slow enough to be free, fast enough to warn
+# with hours of headroom.
+#
+# Alerting goes through logger(1) to syslog (tag: apex-disk-watchdog,
+# daemon.warning / daemon.err). The log file below is for human triage only;
+# cron mail is suppressed so a persistent WARN does not spam root.
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=""
+
+*/15 * * * * root /opt/new-grype-scanner-v1/app/scripts/check-disk-usage.sh >> /var/log/apex-disk-watchdog.log 2>&1

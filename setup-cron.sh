@@ -30,6 +30,23 @@ crontab -l > /tmp/current-cron 2>/dev/null || true
 cat /tmp/current-cron /tmp/scanner-cron | crontab -
 rm /tmp/scanner-cron /tmp/current-cron
 
+# Disk watchdog. Installed as a cron.d drop-in rather than appended to root's
+# crontab so it carries its own MAILTO="" — / sitting above the WARN threshold
+# would otherwise mail root every 15 minutes. Alerting is via syslog (tag
+# apex-disk-watchdog); the log file is for human triage.
+chmod +x /opt/new-grype-scanner-v1/app/scripts/check-disk-usage.sh
+install -m 0644 -o root -g root \
+    /opt/new-grype-scanner-v1/app/scripts/apex-disk-watchdog.cron \
+    /etc/cron.d/apex-disk-watchdog
+install -m 0644 -o root -g root \
+    /opt/new-grype-scanner-v1/app/scripts/apex-disk-watchdog.logrotate \
+    /etc/logrotate.d/apex-disk-watchdog
+
+# Host side of the shared worker /tmp bind mount. Must exist and be world-
+# writable+sticky before the workers start, or Docker creates it root-owned
+# 0755 and the scanners cannot write scratch.
+install -d -m 1777 /opt/scanner-tmp
+
 echo "✅ Cron jobs installed successfully!"
 echo ""
 echo "Scheduled jobs:"

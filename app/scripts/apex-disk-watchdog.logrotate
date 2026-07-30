@@ -1,0 +1,10 @@
+# Keep the disk watchdog from filling the disk it is meant to guard.
+# On a sustained WARN it emits ~20 lines every 15 min.
+/var/log/apex-disk-watchdog.log {
+    weekly
+    rotate 4
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
