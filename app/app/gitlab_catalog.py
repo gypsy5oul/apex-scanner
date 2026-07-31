@@ -49,12 +49,43 @@ def _normalize_report_url(url: str) -> str:
     return url
 
 
+def _hoist_migration_hints(data: Dict[str, Any]) -> None:
+    """Lift the per-image `changes.migration_hints` list to the top level.
+
+    The catalog inlines the *same* hint list into every image — the hints
+    describe the hardening programme as a whole ("curl -> wget", "no package
+    manager on micro"), not any one base. Repeating them N times bloats the
+    payload and forces the UI to pick an arbitrary image to read them from.
+
+    Only hoist when every image carrying a `changes` block agrees. If the
+    producer ever makes the hints genuinely per-image, they stay where they
+    are and the UI keeps rendering them inline.
+    """
+    images = data.get("images") or []
+    with_changes = [
+        img for img in images
+        if isinstance(img, dict) and isinstance(img.get("changes"), dict)
+    ]
+    hint_sets = [
+        tuple(img["changes"]["migration_hints"])
+        for img in with_changes
+        if isinstance(img["changes"].get("migration_hints"), list)
+    ]
+    if not with_changes or len(hint_sets) != len(with_changes) or len(set(hint_sets)) != 1:
+        return
+
+    data["migration_hints"] = list(hint_sets[0])
+    for img in with_changes:
+        img["changes"].pop("migration_hints", None)
+
+
 def _normalize_catalog(data: Dict[str, Any]) -> Dict[str, Any]:
     images = data.get("images") or []
     for img in images:
         if isinstance(img, dict) and img.get("report_url"):
             img["report_url"] = _normalize_report_url(img["report_url"])
     data["images"] = images
+    _hoist_migration_hints(data)
     return data
 
 

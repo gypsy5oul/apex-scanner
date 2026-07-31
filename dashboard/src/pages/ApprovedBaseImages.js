@@ -19,14 +19,18 @@ import {
   Alert,
   Link,
   Stack,
+  Collapse,
+  Button,
 } from '@mui/material';
-import { useTheme } from '@mui/material/styles';
 import SearchIcon from '@mui/icons-material/Search';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowRightIcon from '@mui/icons-material/KeyboardArrowRight';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import PageHeader from '../components/PageHeader';
 import { useTableSort, SortableHeadCell } from '../components/SortableTable';
 import { TableSkeleton } from '../components/LoadingSkeletons';
@@ -37,7 +41,6 @@ import { getSeverity, MONO_FONT } from '../theme/tokens';
 // Color-coded C/H/M/L counts — column header carries the labels, the status
 // chip carries the color-independent signal, so this stays accessible.
 function SevCounts({ scan }) {
-  const theme = useTheme();
   const cells = [
     ['critical', scan?.critical || 0],
     ['high', scan?.high || 0],
@@ -77,6 +80,146 @@ function StatusChip({ status }) {
 
 const TYPE_LABELS = { 'runtime-base': 'Runtime base', 'app-server': 'App server' };
 
+// Known `removed_notable` categories, prettified. Deliberately NOT exhaustive:
+// the producer defines these keys and they already vary per image (jre8 ships
+// two, most ship six), so anything unrecognised is humanized and rendered
+// anyway. A fixed whitelist would silently drop a newly added category.
+const REMOVED_CATEGORY_LABELS = {
+  'package-manager': 'Package manager',
+  'download-net': 'Download / network',
+  'dev-build': 'Dev / build',
+  runtime: 'Runtime',
+  fonts: 'Fonts',
+  utils: 'Utilities',
+};
+
+const humanizeCategory = (key) =>
+  REMOVED_CATEGORY_LABELS[key] || key.replace(/[-_]/g, ' ').replace(/^./, (c) => c.toUpperCase());
+
+function TokenChips({ items, color }) {
+  return (
+    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+      {items.map((t) => (
+        <Chip
+          key={t}
+          size="small"
+          label={t}
+          variant="outlined"
+          color={color}
+          sx={{ height: 22, fontFamily: MONO_FONT, fontSize: '0.72rem' }}
+        />
+      ))}
+    </Box>
+  );
+}
+
+function PanelField({ label, children }) {
+  return (
+    <Box sx={{ mb: 1.75 }}>
+      <Typography
+        variant="caption"
+        sx={{
+          display: 'block',
+          mb: 0.5,
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '.05em',
+          color: 'text.secondary',
+        }}
+      >
+        {label}
+      </Typography>
+      {children}
+    </Box>
+  );
+}
+
+// What actually changed vs the vendor image this base replaces. This is the
+// "will my Dockerfile still build?" answer, so removals are the headline.
+function ChangesPanel({ changes }) {
+  if (!changes || typeof changes !== 'object') {
+    return (
+      <Typography variant="body2" color="text.disabled">
+        No change details published for this image.
+      </Typography>
+    );
+  }
+
+  const removed = (changes.removed_notable && typeof changes.removed_notable === 'object')
+    ? Object.entries(changes.removed_notable).filter(([, v]) => Array.isArray(v) && v.length > 0)
+    : [];
+  const hints = Array.isArray(changes.migration_hints) ? changes.migration_hints : [];
+
+  return (
+    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 3 }}>
+      <Box>
+        {Array.isArray(changes.replaces) && changes.replaces.length > 0 && (
+          <PanelField label="Replaces">
+            <TokenChips items={changes.replaces} />
+          </PanelField>
+        )}
+        {changes.base_os && (
+          <PanelField label="Base OS">
+            <Typography variant="body2" sx={{ fontFamily: MONO_FONT, fontSize: '0.8rem' }}>
+              {changes.base_os}
+            </Typography>
+          </PanelField>
+        )}
+        {Array.isArray(changes.available_commands) && changes.available_commands.length > 0 && (
+          <PanelField label="Commands still available">
+            <TokenChips items={changes.available_commands} color="success" />
+          </PanelField>
+        )}
+        {Array.isArray(changes.adds_back) && changes.adds_back.length > 0 && (
+          <PanelField label="Added back">
+            <TokenChips items={changes.adds_back} color="info" />
+          </PanelField>
+        )}
+        {typeof changes.rpm_package_count === 'number' && (
+          <PanelField label="RPM packages">
+            <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+              {changes.rpm_package_count}
+            </Typography>
+          </PanelField>
+        )}
+      </Box>
+
+      <Box>
+        {removed.length > 0 && (
+          <PanelField label="Removed — not installable on micro bases">
+            <Stack spacing={1}>
+              {removed.map(([category, items]) => (
+                <Box key={category}>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.25 }}>
+                    {humanizeCategory(category)}
+                  </Typography>
+                  <TokenChips items={items} color="error" />
+                </Box>
+              ))}
+            </Stack>
+          </PanelField>
+        )}
+        {changes.note && (
+          <PanelField label="Note">
+            <Typography variant="body2" color="text.secondary">{changes.note}</Typography>
+          </PanelField>
+        )}
+        {/* Only rendered when the backend could NOT hoist these to the top
+            level, i.e. the producer made them genuinely per-image. */}
+        {hints.length > 0 && (
+          <PanelField label="Migration hints">
+            <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2 }}>
+              {hints.map((h) => (
+                <Typography key={h} component="li" variant="body2" color="text.secondary">{h}</Typography>
+              ))}
+            </Stack>
+          </PanelField>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
 const ACCESSORS = {
   name: (r) => r.name || '',
   type: (r) => r.type || '',
@@ -94,6 +237,16 @@ function ApprovedBaseImages() {
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [expanded, setExpanded] = useState(() => new Set());
+  const [hintsOpen, setHintsOpen] = useState(false);
+
+  const toggleRow = useCallback((key) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
 
   const load = useCallback(async (refresh = false) => {
     refresh ? setRefreshing(true) : setLoading(true);
@@ -119,7 +272,19 @@ function ApprovedBaseImages() {
     return images.filter((img) => {
       if (typeFilter !== 'all' && img.type !== typeFilter) return false;
       if (statusFilter !== 'all' && img.status !== statusFilter) return false;
-      if (q && !(`${img.name} ${img.pull_url} ${img.description}`.toLowerCase().includes(q))) return false;
+      if (q) {
+        // Search the change delta too, not just the identity fields. The most
+        // common question this page answers is "what replaces
+        // eclipse-temurin:17?" — which only matches via `replaces`. Commands
+        // are included so "curl" finds the bases that still ship it.
+        const c = img.changes || {};
+        const haystack = [
+          img.name, img.pull_url, img.description,
+          ...(Array.isArray(c.replaces) ? c.replaces : []),
+          ...(Array.isArray(c.available_commands) ? c.available_commands : []),
+        ].join(' ').toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
       return true;
     });
   }, [images, query, typeFilter, statusFilter]);
@@ -179,12 +344,41 @@ function ApprovedBaseImages() {
         </Paper>
       )}
 
+      {/* Migration hints — identical for every image, so the backend hoists
+          them out of the per-image `changes` and we show them once. Collapsed
+          by default to keep the page dense. */}
+      {Array.isArray(data?.migration_hints) && data.migration_hints.length > 0 && (
+        <Paper variant="outlined" sx={{ mb: 2 }}>
+          <Button
+            fullWidth
+            onClick={() => setHintsOpen((v) => !v)}
+            startIcon={<InfoOutlinedIcon fontSize="small" />}
+            endIcon={hintsOpen ? <KeyboardArrowDownIcon /> : <KeyboardArrowRightIcon />}
+            sx={{ justifyContent: 'flex-start', px: 2, py: 1.25, color: 'text.primary', textTransform: 'none' }}
+            aria-expanded={hintsOpen}
+          >
+            <Typography variant="body2" sx={{ flexGrow: 1, textAlign: 'left', fontWeight: 600 }}>
+              Migration hints — these bases are UBI9-micro and have no package manager
+            </Typography>
+          </Button>
+          <Collapse in={hintsOpen} unmountOnExit>
+            <Box sx={{ px: 2, pb: 2 }}>
+              <Stack component="ul" spacing={0.75} sx={{ m: 0, pl: 2 }}>
+                {data.migration_hints.map((h) => (
+                  <Typography key={h} component="li" variant="body2" color="text.secondary">{h}</Typography>
+                ))}
+              </Stack>
+            </Box>
+          </Collapse>
+        </Paper>
+      )}
+
       {/* Filters */}
       <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
           <TextField
             size="small"
-            placeholder="Search name, path, description…"
+            placeholder="Search name, path, description, replaces…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             sx={{ minWidth: 260 }}
@@ -206,12 +400,13 @@ function ApprovedBaseImages() {
       {error && <Alert severity="error" sx={{ mb: 2 }} action={<IconButton size="small" onClick={() => load(true)} aria-label="Retry"><RefreshIcon fontSize="small" /></IconButton>}>{error}</Alert>}
 
       {loading ? (
-        <TableSkeleton rows={8} cols={6} />
+        <TableSkeleton rows={8} cols={8} />
       ) : (
         <TableContainer component={Paper} variant="outlined">
           <Table size="small">
             <TableHead>
               <TableRow>
+                <TableCell sx={{ width: 40 }} />
                 <SortableHeadCell columnKey="name" orderBy={orderBy} order={order} onSort={handleSort}>Image</SortableHeadCell>
                 <SortableHeadCell columnKey="type" orderBy={orderBy} order={order} onSort={handleSort}>Type</SortableHeadCell>
                 <SortableHeadCell columnKey="status" orderBy={orderBy} order={order} onSort={handleSort}>Status</SortableHeadCell>
@@ -224,13 +419,33 @@ function ApprovedBaseImages() {
             <TableBody>
               {sorted.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} sx={{ textAlign: 'center', py: 6, color: 'text.secondary' }}>
+                  <TableCell colSpan={8} sx={{ textAlign: 'center', py: 6, color: 'text.secondary' }}>
                     {images.length === 0 ? 'No approved base images in the catalog yet.' : 'No images match your filters.'}
                   </TableCell>
                 </TableRow>
               ) : (
-                sorted.map((img) => (
-                  <TableRow key={img.pull_url || img.name} hover>
+                sorted.map((img) => {
+                  const rowKey = img.pull_url || img.name;
+                  const isOpen = expanded.has(rowKey);
+                  const hasChanges = !!img.changes;
+                  return (
+                  <React.Fragment key={rowKey}>
+                  <TableRow hover sx={isOpen ? { '& > *': { borderBottom: 'unset' } } : undefined}>
+                    <TableCell sx={{ width: 40 }}>
+                      <Tooltip title={hasChanges ? (isOpen ? 'Hide what changed' : 'Show what changed vs the image it replaces') : 'No change details published'}>
+                        <span>
+                          <IconButton
+                            size="small"
+                            disabled={!hasChanges}
+                            onClick={() => toggleRow(rowKey)}
+                            aria-label={`${isOpen ? 'Hide' : 'Show'} change details for ${img.name}`}
+                            aria-expanded={isOpen}
+                          >
+                            {isOpen ? <KeyboardArrowDownIcon fontSize="small" /> : <KeyboardArrowRightIcon fontSize="small" />}
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    </TableCell>
                     <TableCell>
                       <Typography variant="body2" fontWeight={600}>{img.name}</Typography>
                       {img.description && (
@@ -270,7 +485,18 @@ function ApprovedBaseImages() {
                       ) : <Typography variant="caption" color="text.disabled">—</Typography>}
                     </TableCell>
                   </TableRow>
-                ))
+                  <TableRow>
+                    <TableCell colSpan={8} sx={{ py: 0, ...(isOpen ? {} : { border: 0 }) }}>
+                      <Collapse in={isOpen} timeout="auto" unmountOnExit>
+                        <Box sx={{ py: 2.5, px: 2 }}>
+                          <ChangesPanel changes={img.changes} />
+                        </Box>
+                      </Collapse>
+                    </TableCell>
+                  </TableRow>
+                  </React.Fragment>
+                  );
+                })
               )}
             </TableBody>
           </Table>
