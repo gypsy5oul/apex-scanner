@@ -11,7 +11,10 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
 
 from app.config import settings, get_redis_client
+from app.logging_config import get_logger
 from app.time_utils import now_iso
+
+logger = get_logger(__name__)
 MIN_WORKERS = int(os.getenv('MIN_WORKERS', '2'))
 MAX_WORKERS = int(os.getenv('MAX_WORKERS', '10'))
 SCALE_UP_THRESHOLD = int(os.getenv('SCALE_UP_THRESHOLD', '10'))  # Tasks in queue to trigger scale up
@@ -170,35 +173,53 @@ class AutoScaler:
         return workers
 
     def scale_workers(self, target_count: int) -> bool:
-        """Scale batch workers to target count using docker-compose"""
-        if not self.docker_client:
-            print("Docker client not available, cannot scale")
-            return False
-
+        """Scale batch workers to target count using docker-compose or record advisory recommendation"""
         current_count = self.get_worker_count()
 
         if target_count == current_count:
             return True
 
+        import shutil
+        compose_cmd = shutil.which("docker-compose") or shutil.which("docker")
+        if not compose_cmd or not os.path.exists("/opt/new-grype-scanner-v1/app"):
+            # When running inside worker_autoscaler container with read-only socket proxy,
+            # direct mutation via docker-compose is unavailable.
+            # Record decision in Redis so metrics/host automation can monitor and scale.
+            try:
+                self.redis.set("autoscaler:recommended_workers", str(target_count))
+                self.redis.set("autoscaler:target_action", f"scale_to_{target_count}")
+                self.redis.set("autoscaler:last_decision_time", now_iso())
+            except Exception as re:
+                logger.warning(f"Failed to record autoscaler decision in Redis: {re}")
+            logger.info(
+                f"Autoscaler recommendation: target={target_count} workers (current={current_count}). "
+                "Direct host scaling inactive in container mode."
+            )
+            return True
+
         try:
-            # Use docker-compose scale command
             import subprocess
+            cmd = [compose_cmd, 'up', '-d', '--scale', f'worker-batch={target_count}', '--no-recreate']
+            if compose_cmd.endswith("docker") and not compose_cmd.endswith("docker-compose"):
+                cmd = [compose_cmd, 'compose', 'up', '-d', '--scale', f'worker-batch={target_count}', '--no-recreate']
+
             result = subprocess.run(
-                ['docker-compose', 'up', '-d', '--scale', f'worker-batch={target_count}', '--no-recreate'],
+                cmd,
                 cwd='/opt/new-grype-scanner-v1/app',
                 capture_output=True,
-                text=True
+                text=True,
+                timeout=60
             )
 
             if result.returncode == 0:
-                print(f"Scaled workers from {current_count} to {target_count}")
+                logger.info(f"Scaled workers from {current_count} to {target_count}")
                 return True
             else:
-                print(f"Failed to scale workers: {result.stderr}")
+                logger.error(f"Failed to scale workers: {result.stderr}")
                 return False
 
         except Exception as e:
-            print(f"Error scaling workers: {e}")
+            logger.error(f"Error scaling workers: {e}")
             return False
 
     def make_scaling_decision(self) -> ScalingDecision:

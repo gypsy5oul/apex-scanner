@@ -333,12 +333,15 @@ class ScannerOrchestrator:
 
         Returns "" for entries with no usable CVE id so the caller can skip
         them rather than collapsing every id-less vuln into one bucket.
+        Includes package_version to prevent different versions of the same
+        package from overwriting each other.
         """
         vid = (v.get("id") or "").strip()
         pkg = (v.get("package_name") or "").strip()
+        ver = (v.get("package_version") or "").strip()
         if not vid or vid.upper() in ("N/A", "UNKNOWN", ""):
             return ""
-        return f"{vid}:{pkg}"
+        return f"{vid}:{pkg}:{ver}"
 
     def _merge_both(self, grype_v: Dict, trivy_v: Dict) -> Dict:
         """Merge a vuln found by BOTH scanners, keeping the strongest signal.

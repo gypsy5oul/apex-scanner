@@ -43,3 +43,11 @@ def test_scan_git_repo_never_leaks_token(mock_run):
     assert token not in (res.source or "")
     assert token not in (res.error or "")
     assert res.source == "repo:https://h/r"  # safe_url, no credentials
+
+    # Prove token is NOT in the command line arguments (ps aux / /proc/$pid/cmdline safe)
+    call_cmd = mock_run.call_args[0][0]
+    for arg in call_cmd:
+        assert token not in arg
+    # Prove token is passed via git environment
+    call_env = mock_run.call_args[1].get("env", {})
+    assert "GIT_CONFIG_PARAMETERS" in call_env

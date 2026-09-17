@@ -256,6 +256,17 @@ class TestOrchestratorDeduplication:
         result = self.orchestrator._deduplicate_vulnerabilities(grype_vulns, trivy_vulns)
         assert len(result["all"]) == 2
 
+    def test_dedup_key_includes_package_version(self):
+        """Same CVE in same package but different versions should NOT be deduplicated."""
+        grype_vulns = [
+            {"id": "CVE-2024-1234", "package_name": "log4j-core", "package_version": "2.14.1", "severity": "Critical", "source": "grype"},
+            {"id": "CVE-2024-1234", "package_name": "log4j-core", "package_version": "2.17.1", "severity": "Critical", "source": "grype"},
+        ]
+        trivy_vulns = []
+
+        result = self.orchestrator._deduplicate_vulnerabilities(grype_vulns, trivy_vulns)
+        assert len(result["all"]) == 2
+
     def test_dedup_empty_inputs(self):
         """Both empty inputs should return empty results."""
         result = self.orchestrator._deduplicate_vulnerabilities([], [])

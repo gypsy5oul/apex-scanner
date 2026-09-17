@@ -192,13 +192,14 @@ class IacScanner:
             if not repo_url.startswith(("https://", "http://")):
                 raise ValueError("Only http(s) repository URLs are allowed")
 
-            # clone_url carries the token only for the clone call itself — the
-            # token must never leak into responses/logs.
+            # Authenticate via git environment variable rather than embedding
+            # token in the CLI argument, which would expose it in /proc/$pid/cmdline.
+            git_env = os.environ.copy()
             if token:
-                if repo_url.startswith("https://"):
-                    clone_url = repo_url.replace("https://", f"https://oauth2:{token}@", 1)
-                else:
-                    clone_url = repo_url.replace("http://", f"http://oauth2:{token}@", 1)
+                import base64
+                auth_bytes = f"oauth2:{token}".encode("utf-8")
+                b64_auth = base64.b64encode(auth_bytes).decode("ascii")
+                git_env["GIT_CONFIG_PARAMETERS"] = f"'http.extraheader=AUTHORIZATION: basic {b64_auth}'"
 
             # Clone repository ( -- stops a '-'-leading URL being read as a flag)
             clone_cmd = [
@@ -206,7 +207,7 @@ class IacScanner:
                 "--depth", "1",
                 "--branch", branch,
                 "--",
-                clone_url,
+                repo_url,
                 scan_dir
             ]
 
@@ -214,7 +215,8 @@ class IacScanner:
                 clone_cmd,
                 capture_output=True,
                 text=True,
-                timeout=120
+                timeout=120,
+                env=git_env
             )
 
             if result.returncode != 0:

@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "project": "Apex Scanner",
+  "idea": "Enterprise container security scanning platform — multi-engine correlation (Grype/Trivy/Syft), threat-intel enrichment (KEV/EPSS), AI triage, policy gates, compliance and OpenVEX reporting.",
+  "createdAt": "2026-08-01",
+  "currentStage": "design",
+  "stages": {
+    "requirements": {
+      "status": "approved",
+      "startedAt": "2026-08-01T14:20:00Z",
+      "artifact": "docs/sdlc/01-requirements.md",
+      "exitCriteria": [
+        "Every user story has >=1 acceptance criterion phrased as a verifiable check",
+        "Every story has a MoSCoW priority",
+        "Non-goals section exists and is non-empty",
+        "Open questions listed with owner (user) - none silently resolved"
+      ],
+      "summary": "94 reverse-engineered stories over 21 capability areas; 70 shipped, 5 partial, 19 gap; 11 open questions blocking.",
+      "reviewVerdict": "Adversarial PM review found 40 (8 critical, 17 required, 15 nit); all 40 addressed in one fix round; 4 criticals independently re-verified against source by the main session. No unresolved critical.",
+      "approvedAt": "2026-08-02T06:26:51.787Z"
+    },
+    "feasibility": {
+      "status": "approved",
+      "startedAt": "2026-08-02T06:30:00Z",
+      "artifact": "docs/sdlc/02-feasibility.md",
+      "exitCriteria": [
+        "Go/no-go stated with >=3 supporting reasons",
+        "Risk register has >=3 risks, each with likelihood, impact, mitigation",
+        "Any 'needs spike' item has a time-boxed spike task listed for the plan stage"
+      ],
+      "summary": "GO WITH CONDITIONS. 15 risks, 5 spikes (6.5d), 10 ADRs required. 3 Must stories judged not deliverable this cycle (WK-3, SY-6, SY-9). 4 open questions block Must work directly.",
+      "reviewVerdict": "Adversarial review found 11 (3 critical, 6 required, 2 nit); all 11 addressed. 3 criticals independently re-verified by the main session, including a wrong '97 of 115 untested' figure this document had mis-tagged as verified. No unresolved critical.",
+      "approvedAt": "2026-08-02T06:57:06.950Z"
+    },
+    "plan": {
+      "status": "approved",
+      "startedAt": "2026-08-02T07:05:00Z",
+      "artifact": "docs/sdlc/03-plan.md",
+      "exitCriteria": [
+        "Every backlog task has acceptance criteria + a verification command",
+        "No task sized XL",
+        "Dependencies form a valid order (no cycles, no forward references)",
+        "Milestones each end in demonstrable working software"
+      ],
+      "summary": "44 tasks across 8 milestones and 8 checkpoints. 5 spikes, 6 ADRs, characterization harness as task zero. WK-3/SY-6/SY-9 out of cycle. T-44 blocked on a compliance retention window from the user.",
+      "reviewVerdict": "Adversarial architect review found 30 (5 critical, 21 required, 4 nit); all addressed. 3 criticals independently re-verified, incl. dashboard/src/api.js:304 hardcoding ws://host:7070 with no credential - shipping AU-10 without the paired client change would have killed live scan progress for every user.",
+      "approvedAt": "2026-08-03T05:37:20.677Z"
+    },
+    "design": {
+      "status": "awaiting-approval",
+      "startedAt": "2026-08-03T05:45:00Z",
+      "artifact": "docs/sdlc/04-design.md",
+      "exitCriteria": [
+        "Every plan-stage backlog task maps to a component in the design",
+        ">=3 numbered ADRs (stack choice, data storage, deployment shape at minimum)",
+        "Every API contract names request/response types exactly",
+        "Security section addresses every trust boundary the threat model found"
+      ],
+      "summary": "20 binding ADRs. ADR-8 decides DO NOT SPLIT routes_v2.py, so plan Branch B is the executing graph and T-11 is void. 7 sections, all 44 plan tasks mapped, 3 plan/code gaps flagged to BA.",
+      "reviewVerdict": "Security threat model (3 critical, 8 required) + adversarial review (1 critical, 4 required) = 4 critical, 12 required, 4 nit; all addressed, 5 independently re-verified. Two findings were defects in the design itself: ADR-6 purged audit_log at 30 days (would destroy the SY-8 evidence it exists to protect) and the edge nginx has no WebSocket Upgrade headers at all, so T-20 was unreachable through the edge. No unresolved critical.",
+      "flaggedToUser": [
+        "audit_log retention window is unstated - purge now excludes it and it retains indefinitely until a window is given",
+        "T-31 first verify clause is vacuous (auth.py:277 writes role on every key); only the S4 reconciliation is a real test"
+      ]
+    },
+    "develop": {
+      "status": "pending"
+    },
+    "test": {
+      "status": "pending"
+    },
+    "uat": {
+      "status": "pending"
+    },
+    "deploy": {
+      "status": "pending"
+    },
+    "monitor": {
+      "status": "pending"
+    },
+    "maintain": {
+      "status": "pending"
+    }
+  },
+  "decisions": [
+    "approved requirements at 2026-08-02T06:26:51.787Z",
+    "approved feasibility at 2026-08-02T06:57:06.950Z",
+    "OQ-11 answered 2026-08-02: reports stay readable by any authenticated user (main.py:103-108 design stands). AU-8 drops Must->Should and is largely cosmetic; EX-3 acceptance criterion is unchanged.",
+    "OQ-7 answered 2026-08-02: API keys gain role+owner; existing keys grandfathered as admin. No pipeline breaks. Cross-tenant exposure persists until every key is rotated, so a rotation task is required alongside the code change.",
+    "OQ-5 answered 2026-08-02: compliance output is or will be audit evidence. Escalation applies - SY-8 rises Should->Must, compliance.py:23 thresholds must become configurable, AU-9 becomes a compliance dependency.",
+    "OQ-3 answered 2026-08-02: Postgres retention matches the 30-day Redis SCAN_RESULT_TTL.",
+    "Compliance retention window answered 2026-08-02: 30 days, equal to the operational window. T-44 unblocked. Forces ARTIFACT_RETENTION_DAYS 7 -> 30 (config.py:148) so report/SBOM files do not expire 23 days before the record they evidence. ACCEPTED RESIDUAL RISK: a 30-day window cannot evidence an annual audit; raised twice and reaffirmed.",
+    "T-31 (production API key rotation) owner assigned 2026-08-02: devops-ops. This is the task that actually closes the AU-6 cross-tenant exposure - the code change in T-30 only makes it possible.",
+    "approved plan at 2026-08-03T05:37:20.677Z"
+  ]
+}
