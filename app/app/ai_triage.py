@@ -1,26 +1,37 @@
 """
 AI/ML-Assisted Vulnerability Triage Engine
 
-Supports two providers, selected via env var ``AI_TRIAGE_PROVIDER``:
-- ``anthropic``  — Claude via the Anthropic API (requires ANTHROPIC_API_KEY).
-- ``openai``     — Any OpenAI-compatible endpoint (local vLLM, Ollama, LM
-                    Studio, etc.). Requires AI_TRIAGE_BASE_URL + AI_TRIAGE_MODEL;
-                    AI_TRIAGE_API_KEY is optional for self-hosted servers.
+Supports internal local models hosted on vLLM (Qwen 3.8 27B) via Google ADK Agent
+and LiteLLM, standard OpenAI-compatible endpoints, and Anthropic Claude.
 
-If neither provider is configured, AI triage gracefully reports
-``enabled: false`` instead of erroring.
+Configuration via environment variables:
+- ``AI_TRIAGE_PROVIDER``   — Provider selection: ``adk`` (default when available),
+                             ``openai``, ``anthropic``, or ``none`` to disable.
+- ``AI_TRIAGE_BASE_URL``   — Base URL for local vLLM/OpenAI endpoint.
+                             Defaults to ``http://10.0.6.31:8000/v1``.
+- ``AI_TRIAGE_MODEL``      — Model name. Defaults to ``qwen3.8-27b``.
+- ``AI_TRIAGE_API_KEY``    — Optional API key for self-hosted or remote models.
+- ``ANTHROPIC_API_KEY``    — Required when ``AI_TRIAGE_PROVIDER=anthropic``.
+
+Zero external calls:
+- LiteLLM cost map is localized via LITELLM_LOCAL_MODEL_COST_MAP=True.
+- LiteLLM telemetry is disabled.
+- Model generation uses temperature=0.0 and chat_template_kwargs={"enable_thinking": False}.
 """
 import json
 import os
 import re
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 from app.config import get_redis_client
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# Prevent external network calls by LiteLLM
+os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 
 try:
     import anthropic
@@ -34,8 +45,29 @@ try:
 except ImportError:
     OPENAI_AVAILABLE = False
 
+try:
+    import litellm
+    litellm.telemetry = False
+    litellm.suppress_debug_info = True
+    LITELLM_AVAILABLE = True
+except ImportError:
+    LITELLM_AVAILABLE = False
+
+try:
+    from google.adk.agents import Agent
+    from google.adk.models.lite_llm import LiteLlm
+    from google.adk.runners import Runner
+    from google.adk.sessions.in_memory_session_service import InMemorySessionService
+    from google.genai import types
+    ADK_AVAILABLE = True
+except ImportError:
+    ADK_AVAILABLE = False
+
 CACHE_TTL = 86400  # 24 hours
 CACHE_PREFIX = "ai_triage:"
+
+DEFAULT_BASE_URL = "http://10.0.6.31:8000/v1"
+DEFAULT_MODEL = "qwen3.8-27b"
 
 
 @dataclass
@@ -55,53 +87,76 @@ class TriageResult:
 # Provider configuration
 # --------------------------------------------------------------------------
 
-def _provider() -> str:
-    """Resolve the active provider: ``openai``, ``anthropic``, or ``none``."""
-    explicit = (os.environ.get("AI_TRIAGE_PROVIDER") or "").strip().lower()
-    if explicit in ("openai", "anthropic"):
-        return explicit
-    # Auto-detect: prefer local OpenAI-compatible if a base URL is set.
-    if os.environ.get("AI_TRIAGE_BASE_URL") and OPENAI_AVAILABLE:
-        return "openai"
-    if os.environ.get("ANTHROPIC_API_KEY") and ANTHROPIC_AVAILABLE:
-        return "anthropic"
-    return "none"
+def _base_url() -> str:
+    """Resolve the vLLM / OpenAI base URL."""
+    return os.environ.get("AI_TRIAGE_BASE_URL", DEFAULT_BASE_URL)
 
 
 def _model_id() -> str:
     """Resolve the model identifier for the active provider."""
-    if _provider() == "openai":
-        return os.environ.get("AI_TRIAGE_MODEL", "")
+    provider = _provider()
+    if provider in ("adk", "openai"):
+        return os.environ.get("AI_TRIAGE_MODEL", DEFAULT_MODEL)
     return os.environ.get("AI_TRIAGE_MODEL", "claude-sonnet-4-20250514")
 
 
+def _provider() -> str:
+    """Resolve active provider: ``adk``, ``openai``, ``anthropic``, or ``none``."""
+    explicit = (os.environ.get("AI_TRIAGE_PROVIDER") or "").strip().lower()
+    if explicit in ("adk", "google-adk", "litellm"):
+        return "adk"
+    if explicit in ("openai", "anthropic"):
+        return explicit
+    if explicit in ("none", "disabled", "false", "off"):
+        return "none"
+
+    # Explicitly empty string check: if AI_TRIAGE_PROVIDER is set to empty string
+    # and no base URL was set, treat as unconfigured/disabled per compose defaults.
+    if os.environ.get("AI_TRIAGE_PROVIDER") == "" and not os.environ.get("AI_TRIAGE_BASE_URL"):
+        return "none"
+
+    # Auto-detection
+    if os.environ.get("AI_TRIAGE_BASE_URL") or os.environ.get("AI_TRIAGE_MODEL"):
+        return "adk" if (ADK_AVAILABLE and LITELLM_AVAILABLE) else "openai"
+    if os.environ.get("ANTHROPIC_API_KEY") and ANTHROPIC_AVAILABLE:
+        return "anthropic"
+    if os.environ.get("AI_TRIAGE_ENABLED", "").lower() in ("false", "0", "no"):
+        return "none"
+
+    # Default to internal ADK agent with local model
+    return "adk" if (ADK_AVAILABLE and LITELLM_AVAILABLE) else "openai"
+
+
 def is_ai_enabled() -> bool:
+    """Check if AI triage is enabled and configured."""
+    if os.environ.get("AI_TRIAGE_ENABLED", "").lower() in ("false", "0", "no"):
+        return False
     provider = _provider()
+    if provider == "none":
+        return False
     if provider == "anthropic":
         return bool(os.environ.get("ANTHROPIC_API_KEY"))
-    if provider == "openai":
-        # OpenAI-compatible self-hosted servers often don't need an API key
-        return bool(os.environ.get("AI_TRIAGE_BASE_URL")) and bool(_model_id())
+    if provider in ("adk", "openai"):
+        return bool(_base_url()) and bool(_model_id())
     return False
 
 
 def get_status() -> Dict[str, Any]:
-    """Return a small dict describing the current AI triage config."""
+    """Return a dictionary describing current AI triage configuration."""
     provider = _provider()
+    enabled = is_ai_enabled()
     return {
-        "enabled": is_ai_enabled(),
-        "provider": provider if provider != "none" else None,
-        "model": _model_id() if is_ai_enabled() else None,
-        "endpoint": os.environ.get("AI_TRIAGE_BASE_URL") if provider == "openai" else None,
+        "enabled": enabled,
+        "provider": provider if enabled and provider != "none" else None,
+        "model": _model_id() if enabled else None,
+        "endpoint": _base_url() if enabled and provider in ("adk", "openai") else None,
     }
 
 
 # --------------------------------------------------------------------------
-# LLM call routing
+# LLM call routing and JSON extraction
 # --------------------------------------------------------------------------
 
-# Strip Qwen-style <think>...</think> reasoning blocks and common preambles.
-# The model sometimes wraps its actual answer in markdown fences too.
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _LEADING_PREAMBLE = re.compile(
     r"^\s*(?:Here(?:'s| is) (?:a )?(?:thinking process|my answer|the JSON|the response)[^\n{]*\n+)+",
@@ -116,15 +171,13 @@ def _extract_json(text: str) -> str:
 
     # Strip ```json ... ``` fences if present.
     if text.startswith("```"):
-        # Drop the first fence line and the trailing fence.
-        text = text.split("```", 2)
-        # text[0] = "", text[1] = "json\n{...}" or "{...}", text[2] = trailing
-        body = text[1] if len(text) > 1 else ""
+        text_parts = text.split("```", 2)
+        body = text_parts[1] if len(text_parts) > 1 else ""
         if body.lower().startswith("json"):
             body = body[4:]
         text = body.strip().rstrip("`").strip()
 
-    # Final fallback: locate the first '{' and the matching last '}'.
+    # Fallback: locate first '{' and matching last '}'.
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
@@ -132,55 +185,206 @@ def _extract_json(text: str) -> str:
     return text
 
 
-def _call_llm(prompt: str, max_tokens: int = 2000) -> str:
-    """Send a single-turn prompt to the configured LLM and return the raw text."""
-    provider = _provider()
-    if provider == "anthropic":
-        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        response = client.messages.create(
-            model=_model_id(),
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.content[0].text
+def _call_adk_agent(
+    prompt: str,
+    max_tokens: int = 2000,
+    system_instruction: Optional[str] = None,
+) -> str:
+    """Run prompt using Google ADK Agent with LiteLlm."""
+    if not (ADK_AVAILABLE and LITELLM_AVAILABLE):
+        raise RuntimeError("Google ADK or LiteLLM is not available")
 
-    if provider == "openai":
-        client = openai.OpenAI(
-            api_key=os.environ.get("AI_TRIAGE_API_KEY", "none"),
-            base_url=os.environ["AI_TRIAGE_BASE_URL"].rstrip("/"),
-            timeout=120.0,
+    base_url = _base_url().rstrip("/")
+    model_id = _model_id()
+    model_name = f"openai/{model_id}" if not model_id.startswith("openai/") else model_id
+    api_key = os.environ.get("AI_TRIAGE_API_KEY", "none")
+
+    sys_content = system_instruction or (
+        "You are a senior container security engineer. "
+        "Reply with raw JSON only — no <think> blocks, "
+        "no markdown fences, no commentary."
+    )
+
+    llm = LiteLlm(
+        model=model_name,
+        api_base=base_url,
+        api_key=api_key,
+        temperature=0.0,
+        chat_template_kwargs={"enable_thinking": False},
+        max_tokens=max_tokens,
+        drop_params=True,
+    )
+
+    agent = Agent(
+        name="ai_triage_agent",
+        model=llm,
+        instruction=sys_content,
+    )
+
+    session_service = InMemorySessionService()
+    session_id = f"triage_session_{datetime.now(timezone.utc).timestamp()}"
+    user_id = "ai_triage_user"
+    session_service.create_session_sync(user_id=user_id, app_name="ai_triage", session_id=session_id)
+    runner = Runner(agent=agent, app_name="ai_triage", session_service=session_service)
+
+    events = list(runner.run(
+        user_id=user_id,
+        session_id=session_id,
+        new_message=types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=prompt)],
+        ),
+    ))
+
+    result_text = []
+    for event in events:
+        if event.content and event.content.parts:
+            for part in event.content.parts:
+                if getattr(part, "text", None):
+                    result_text.append(part.text)
+
+    return "".join(result_text)
+
+
+def _call_litellm(
+    prompt: str,
+    max_tokens: int = 2000,
+    system_instruction: Optional[str] = None,
+) -> str:
+    """Direct LiteLLM call fallback."""
+    if not LITELLM_AVAILABLE:
+        raise RuntimeError("LiteLLM is not available")
+
+    base_url = _base_url().rstrip("/")
+    model_id = _model_id()
+    model_name = f"openai/{model_id}" if not model_id.startswith("openai/") else model_id
+    api_key = os.environ.get("AI_TRIAGE_API_KEY", "none")
+
+    sys_content = system_instruction or (
+        "You are a senior container security engineer. "
+        "Reply with raw JSON only — no <think> blocks, "
+        "no markdown fences, no commentary."
+    )
+
+    response = litellm.completion(
+        model=model_name,
+        api_base=base_url,
+        api_key=api_key,
+        messages=[
+            {"role": "system", "content": sys_content},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.0,
+        chat_template_kwargs={"enable_thinking": False},
+        max_tokens=max_tokens,
+        drop_params=True,
+    )
+    return response.choices[0].message.content or ""
+
+
+def _call_openai(
+    prompt: str,
+    max_tokens: int = 2000,
+    system_instruction: Optional[str] = None,
+) -> str:
+    """Direct OpenAI-compatible call fallback."""
+    if not OPENAI_AVAILABLE:
+        raise RuntimeError("OpenAI client is not available")
+
+    base_url = _base_url().rstrip("/")
+    model_id = _model_id()
+    api_key = os.environ.get("AI_TRIAGE_API_KEY", "none")
+
+    sys_content = system_instruction or (
+        "You are a senior container security engineer. "
+        "Reply with raw JSON only — no <think> blocks, "
+        "no markdown fences, no commentary."
+    )
+
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        timeout=120.0,
+    )
+    kwargs = dict(
+        model=model_id,
+        messages=[
+            {"role": "system", "content": sys_content},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=max_tokens,
+        temperature=0.0,
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+    )
+    try:
+        response = client.chat.completions.create(
+            response_format={"type": "json_object"}, **kwargs
         )
-        # Ask for JSON only — keeps Qwen from preambling. Some local servers
-        # don't support response_format, so we tolerate failure and retry plain.
-        kwargs = dict(
-            model=_model_id(),
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a senior container security engineer. "
-                        "Reply with raw JSON only — no <think> blocks, "
-                        "no markdown fences, no commentary."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=max_tokens,
-            temperature=0.2,
-        )
+    except Exception:
+        kwargs.pop("extra_body", None)
         try:
             response = client.chat.completions.create(
                 response_format={"type": "json_object"}, **kwargs
             )
         except Exception:
             response = client.chat.completions.create(**kwargs)
-        return response.choices[0].message.content or ""
+    return response.choices[0].message.content or ""
 
-    raise RuntimeError("No AI provider configured")
+
+def _call_anthropic(
+    prompt: str,
+    max_tokens: int = 2000,
+) -> str:
+    """Direct Anthropic call."""
+    if not ANTHROPIC_AVAILABLE:
+        raise RuntimeError("Anthropic SDK is not available")
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    response = client.messages.create(
+        model=_model_id(),
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.content[0].text
+
+
+def _call_llm(
+    prompt: str,
+    max_tokens: int = 2000,
+    system_instruction: Optional[str] = None,
+) -> str:
+    """Send a prompt to the configured LLM with fallbacks."""
+    provider = _provider()
+    if provider == "anthropic":
+        return _call_anthropic(prompt, max_tokens=max_tokens)
+
+    if provider in ("adk", "openai"):
+        # 1. Prefer Google ADK Agent with LiteLlm
+        if ADK_AVAILABLE and LITELLM_AVAILABLE:
+            try:
+                res = _call_adk_agent(prompt, max_tokens=max_tokens, system_instruction=system_instruction)
+                if res:
+                    return res
+            except Exception as e:
+                logger.warning("Google ADK Agent call failed, trying LiteLLM fallback", error=str(e))
+
+        # 2. Fallback to direct LiteLLM
+        if LITELLM_AVAILABLE:
+            try:
+                res = _call_litellm(prompt, max_tokens=max_tokens, system_instruction=system_instruction)
+                if res:
+                    return res
+            except Exception as e:
+                logger.warning("LiteLLM call failed, trying OpenAI fallback", error=str(e))
+
+        # 3. Fallback to direct OpenAI client
+        if OPENAI_AVAILABLE:
+            return _call_openai(prompt, max_tokens=max_tokens, system_instruction=system_instruction)
+
+    raise RuntimeError(f"No AI provider configured or available for provider={provider}")
 
 
 # --------------------------------------------------------------------------
-# Vulnerability summary builder (unchanged from prior version)
+# Vulnerability summary builder
 # --------------------------------------------------------------------------
 
 def _build_vuln_summary(vulnerabilities: List[Dict[str, Any]], scan_data: Dict[str, Any]) -> str:
@@ -257,18 +461,26 @@ def _get_cache_key(scan_id: str) -> str:
 
 
 def get_cached_triage(scan_id: str) -> Optional[Dict[str, Any]]:
-    r = get_redis_client()
-    cached = r.get(_get_cache_key(scan_id))
-    if cached:
-        result = json.loads(cached)
-        result["cached"] = True
-        return result
+    """Retrieve cached triage result for scan_id if available."""
+    try:
+        r = get_redis_client()
+        cached = r.get(_get_cache_key(scan_id))
+        if cached:
+            result = json.loads(cached)
+            result["cached"] = True
+            return result
+    except Exception as e:
+        logger.debug("Redis cache read failed", error=str(e), scan_id=scan_id)
     return None
 
 
 def _cache_triage(scan_id: str, result: Dict[str, Any]):
-    r = get_redis_client()
-    r.setex(_get_cache_key(scan_id), CACHE_TTL, json.dumps(result))
+    """Cache triage result in Redis."""
+    try:
+        r = get_redis_client()
+        r.setex(_get_cache_key(scan_id), CACHE_TTL, json.dumps(result))
+    except Exception as e:
+        logger.debug("Redis cache write failed", error=str(e), scan_id=scan_id)
 
 
 # --------------------------------------------------------------------------
@@ -281,6 +493,7 @@ def generate_triage(
     vulnerabilities: List[Dict[str, Any]],
     force: bool = False,
 ) -> Dict[str, Any]:
+    """Generate executive AI triage assessment for a container scan."""
     if not is_ai_enabled():
         return {
             "scan_id": scan_id,
@@ -366,6 +579,7 @@ def generate_remediation_summary(
     scan_data: Dict[str, Any],
     vulnerabilities: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    """Generate a structured remediation guide for a container scan."""
     if not is_ai_enabled():
         return {
             "scan_id": scan_id,
@@ -374,12 +588,15 @@ def generate_remediation_summary(
         }
 
     cache_key = f"{CACHE_PREFIX}remediation:{scan_id}"
-    r = get_redis_client()
-    cached = r.get(cache_key)
-    if cached:
-        result = json.loads(cached)
-        result["cached"] = True
-        return result
+    try:
+        r = get_redis_client()
+        cached = r.get(cache_key)
+        if cached:
+            result = json.loads(cached)
+            result["cached"] = True
+            return result
+    except Exception:
+        r = None
 
     prompt = f"""You are a DevSecOps engineer writing a remediation guide for a development team.
 Based on the following container vulnerability scan, write a clear, actionable remediation guide.
@@ -419,7 +636,11 @@ Keep it practical. Limit to the 10 most impactful package updates."""
             "cached": False,
             "enabled": True,
         }
-        r.setex(cache_key, CACHE_TTL, json.dumps(result))
+        if r:
+            try:
+                r.setex(cache_key, CACHE_TTL, json.dumps(result))
+            except Exception:
+                pass
         return result
 
     except Exception as e:
@@ -428,4 +649,196 @@ Keep it practical. Limit to the 10 most impactful package updates."""
             "scan_id": scan_id,
             "error": f"AI remediation failed: {str(e)}",
             "enabled": True,
+        }
+
+
+def generate_remediation_plan(
+    *args,
+    **kwargs,
+) -> Dict[str, Any]:
+    """Generate a structured remediation plan. Backwards compatible wrapper."""
+    scan_id = kwargs.get("scan_id", "")
+    scan_data = kwargs.get("scan_data") or {}
+    vulnerabilities = kwargs.get("vulnerabilities") or []
+
+    if args:
+        if isinstance(args[0], str):
+            scan_id = args[0]
+            if len(args) > 1 and isinstance(args[1], dict):
+                scan_data = args[1]
+            if len(args) > 2 and isinstance(args[2], list):
+                vulnerabilities = args[2]
+        elif isinstance(args[0], list):
+            vulnerabilities = args[0]
+            if len(args) > 1 and isinstance(args[1], dict):
+                scan_data = args[1]
+        elif isinstance(args[0], dict):
+            scan_data = args[0]
+
+    scan_id = scan_id or scan_data.get("scan_id", "remediation_plan")
+    return generate_remediation_summary(scan_id, scan_data, vulnerabilities)
+
+
+def triage_vulnerability(
+    vulnerability: Dict[str, Any],
+    context: Optional[Dict[str, Any]] = None,
+) -> Optional[TriageResult]:
+    """Triage a single vulnerability using AI.
+    
+    Returns a TriageResult or None if AI is disabled or fails.
+    """
+    if not is_ai_enabled():
+        return None
+
+    if isinstance(context, str):
+        context = {"description": context}
+    else:
+        context = context or {}
+    scan_id = context.get("scan_id", vulnerability.get("scan_id", "vuln_triage"))
+    cve_id = vulnerability.get("id", vulnerability.get("cve_id", "unknown"))
+    pkg = vulnerability.get("package", vulnerability.get("artifact", {}).get("name", "unknown"))
+    version = vulnerability.get("version", vulnerability.get("artifact", {}).get("version", "unknown"))
+    fix = vulnerability.get("fix_version", vulnerability.get("fixedInVersion", "none"))
+    severity = vulnerability.get("severity", "unknown")
+    epss = vulnerability.get("epss_score", vulnerability.get("epss", {}).get("epss", "none"))
+    kev = vulnerability.get("kev_match", vulnerability.get("in_kev", False))
+
+    cache_key = f"{CACHE_PREFIX}vuln:{scan_id}:{cve_id}"
+    try:
+        r = get_redis_client()
+        cached = r.get(cache_key)
+        if cached:
+            data = json.loads(cached)
+            data["cached"] = True
+            return TriageResult(**data)
+    except Exception:
+        r = None
+
+    prompt = f"""You are a senior container security engineer performing triage on a single vulnerability.
+Vulnerability details:
+- CVE / ID: {cve_id}
+- Package: {pkg}@{version}
+- Fixed In: {fix}
+- Severity: {severity}
+- EPSS Score: {epss}
+- CISA KEV: {kev}
+- Context: {context}
+
+Respond in the following JSON format (no markdown, just raw JSON):
+{{
+  "risk_classification": "critical_action|high_priority|monitor|accept_risk",
+  "executive_summary": "1-2 sentence assessment of this vulnerability",
+  "prioritized_actions": [
+    {{
+      "priority": 1,
+      "action": "Remediation step for {cve_id}",
+      "packages": ["{pkg}"],
+      "cves_fixed": ["{cve_id}"],
+      "effort": "minimal|moderate|significant",
+      "impact": "Security impact if not fixed"
+    }}
+  ],
+  "exploit_context": "Real-world exploitability analysis based on EPSS and KEV",
+  "remediation_effort": "minimal|moderate|significant|major"
+}}"""
+
+    try:
+        raw = _call_llm(prompt, max_tokens=1000)
+        ai_result = json.loads(_extract_json(raw))
+        result = TriageResult(
+            scan_id=scan_id,
+            risk_classification=ai_result.get("risk_classification", "monitor"),
+            executive_summary=ai_result.get("executive_summary", ""),
+            prioritized_actions=ai_result.get("prioritized_actions", []),
+            exploit_context=ai_result.get("exploit_context", ""),
+            remediation_effort=ai_result.get("remediation_effort", "moderate"),
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            model_used=_model_id(),
+            cached=False,
+        )
+        if r:
+            try:
+                r.setex(cache_key, CACHE_TTL, json.dumps(asdict(result)))
+            except Exception:
+                pass
+        return result
+    except Exception as e:
+        logger.error("triage_vulnerability failed", error=str(e), cve_id=cve_id)
+        return None
+
+
+def triage_batch(
+    vulnerabilities: List[Dict[str, Any]],
+    context: Optional[Dict[str, Any]] = None,
+) -> List[TriageResult]:
+    """Triage a batch of vulnerabilities.
+    
+    Returns a list of TriageResult objects.
+    """
+    if not is_ai_enabled() or not vulnerabilities:
+        return []
+
+    results = []
+    for vuln in vulnerabilities:
+        res = triage_vulnerability(vuln, context=context)
+        if res is not None:
+            results.append(res)
+    return results
+
+
+def explain_finding(
+    finding: Dict[str, Any],
+    context: Optional[Dict[str, Any]] = None,
+    **kwargs,
+) -> Dict[str, Any]:
+    """Provide a detailed explanation and impact analysis for a specific finding."""
+    cve_id = finding.get("id", finding.get("cve_id", "unknown"))
+    if not is_ai_enabled():
+        return {
+            "finding_id": cve_id,
+            "enabled": False,
+            "error": "AI triage unavailable — configure AI_TRIAGE_PROVIDER (anthropic or openai)",
+        }
+
+    pkg = finding.get("package", finding.get("artifact", {}).get("name", "unknown"))
+    version = finding.get("version", finding.get("artifact", {}).get("version", "unknown"))
+    severity = finding.get("severity", "unknown")
+
+    prompt = f"""You are a container security expert. Explain the following vulnerability finding:
+- CVE/ID: {cve_id}
+- Package: {pkg}@{version}
+- Severity: {severity}
+- Details: {finding.get('description', '')}
+- Context: {context or {}}
+
+Provide a clear explanation in JSON format:
+{{
+  "finding_id": "{cve_id}",
+  "explanation": "Detailed explanation of what the vulnerability is and how it works",
+  "attack_vector": "How an attacker could exploit this in a container environment",
+  "business_impact": "Potential impact to data confidentiality, integrity, or availability",
+  "recommended_action": "Specific recommendation to resolve or mitigate",
+  "confidence": "high|medium|low"
+}}"""
+
+    try:
+        raw = _call_llm(prompt, max_tokens=1000)
+        ai_result = json.loads(_extract_json(raw))
+        return {
+            "finding_id": cve_id,
+            "package": pkg,
+            "version": version,
+            "severity": severity,
+            **ai_result,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "model_used": _model_id(),
+            "provider": _provider(),
+            "enabled": True,
+        }
+    except Exception as e:
+        logger.error("explain_finding failed", error=str(e), finding_id=cve_id)
+        return {
+            "finding_id": cve_id,
+            "enabled": True,
+            "error": f"Failed to explain finding: {str(e)}",
         }

@@ -237,7 +237,7 @@ def create_access_token(username: str, role: str = "admin") -> tuple[str, int]:
 def verify_token(token: str) -> Optional[TokenData]:
     """Verify JWT token and return token data."""
     try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM], leeway=60)
         username = payload.get("sub")
         exp = datetime.fromtimestamp(payload.get("exp"))
         role = payload.get("role", "user")  # Default "user" for least-privilege

@@ -86,7 +86,7 @@ def make_state() -> Tuple[str, str, str]:
 
 def read_state(signed: str) -> Optional[dict]:
     try:
-        return jwt.decode(signed, settings.JWT_SECRET_KEY, algorithms=["HS256"])
+        return jwt.decode(signed, settings.JWT_SECRET_KEY, algorithms=["HS256"], leeway=60)
     except jwt.InvalidTokenError:
         return None
 
@@ -156,6 +156,7 @@ async def validate_id_token(id_token: str, nonce: Optional[str]) -> dict:
         algorithms=["RS256"],
         audience=settings.OIDC_CLIENT_ID,
         issuer=settings.OIDC_ISSUER,
+        leeway=60,
         options={"require": ["exp", "iat"]},
     )
     if nonce and claims.get("nonce") != nonce:

@@ -2,11 +2,28 @@
 
 #############################################################
 # Dynamic Worker Scaling Script
-# Usage: ./scale-workers.sh [up|down|auto] [number]
+# Usage: ./scale-workers.sh [up|down|auto|status] [number]
 #############################################################
 
-COMPOSE_FILE="docker-compose.scale.yml"
+COMPOSE_DIR="/opt/new-grype-scanner-v1/app"
+COMPOSE_FILE="$COMPOSE_DIR/docker-compose.yml"
 REDIS_HOST="redis_cache"
+SERVICE="worker-batch"
+
+# Load Redis password from .env if present
+if [ -f "$COMPOSE_DIR/.env" ]; then
+    REDIS_PASSWORD=$(grep -E '^REDIS_PASSWORD=' "$COMPOSE_DIR/.env" | cut -d'=' -f2- | tr -d '"'\''\r')
+fi
+
+REDIS_AUTH=""
+if [ -n "$REDIS_PASSWORD" ]; then
+    REDIS_AUTH="-a $REDIS_PASSWORD"
+fi
+
+COMPOSE_BIN="docker-compose"
+if ! command -v docker-compose &>/dev/null; then
+    COMPOSE_BIN="docker compose"
+fi
 
 # Colors
 GREEN='\033[0;32m'
@@ -30,14 +47,21 @@ warning() {
 # Get current queue size
 #############################################################
 get_queue_size() {
-    docker exec $REDIS_HOST redis-cli LLEN celery 2>/dev/null || echo "0"
+    local total=0
+    for q in high_priority batch default low_priority system; do
+        len=$(docker exec $REDIS_HOST redis-cli $REDIS_AUTH LLEN "$q" 2>/dev/null || echo "0")
+        if [[ "$len" =~ ^[0-9]+$ ]]; then
+            total=$((total + len))
+        fi
+    done
+    echo "$total"
 }
 
 #############################################################
 # Get current worker count
 #############################################################
 get_worker_count() {
-    docker-compose -f $COMPOSE_FILE ps worker 2>/dev/null | grep -c "Up" || echo "0"
+    docker ps --format '{{.Names}}' | grep -c "^app-worker-batch" || echo "0"
 }
 
 #############################################################
@@ -45,14 +69,14 @@ get_worker_count() {
 #############################################################
 scale_to() {
     local target=$1
-    log "Scaling workers to $target instances..."
+    log "Scaling $SERVICE workers to $target instances..."
 
-    docker-compose -f $COMPOSE_FILE up -d --scale worker=$target
+    $COMPOSE_BIN -f "$COMPOSE_FILE" up -d --scale "${SERVICE}=$target" --no-recreate
 
     sleep 5
 
     actual=$(get_worker_count)
-    log "Current worker count: $actual"
+    log "Current batch worker count: $actual"
 
     if [ "$actual" -eq "$target" ]; then
         log "✅ Successfully scaled to $target workers"
@@ -66,12 +90,12 @@ scale_to() {
 # Auto-scale based on queue size
 #############################################################
 auto_scale() {
-    log "Starting auto-scaling..."
+    log "Starting auto-scaling check..."
 
     queue_size=$(get_queue_size)
     current_workers=$(get_worker_count)
 
-    log "Queue size: $queue_size, Current workers: $current_workers"
+    log "Queue size: $queue_size, Current batch workers: $current_workers"
 
     # Calculate desired workers based on queue
     # Rule: 1 worker per 10 queued tasks, min 2, max 10
@@ -111,39 +135,38 @@ show_status() {
     # Queue status
     queue_size=$(get_queue_size)
     echo "📊 Queue Status:"
-    echo "   Pending scans: $queue_size"
+    echo "   Pending tasks across queues: $queue_size"
     echo ""
 
     # Worker status
-    worker_count=$(get_worker_count)
+    batch_workers=$(get_worker_count)
+    high_workers=$(docker ps --format '{{.Names}}' | grep -c "^app-worker-high" || echo "0")
     echo "⚙️  Workers:"
-    echo "   Active workers: $worker_count"
-    echo "   Capacity: $(($worker_count * 2)) concurrent scans"
+    echo "   High-priority workers: $high_workers"
+    echo "   Batch workers: $batch_workers"
     echo ""
 
     # API status
-    api_count=$(docker-compose -f $COMPOSE_FILE ps api 2>/dev/null | grep -c "Up" || echo "0")
-    echo "🌐 API Servers:"
-    echo "   Active instances: $api_count"
+    api_status=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:7070/health 2>/dev/null || echo "000")
+    echo "🌐 API Server:"
+    if [ "$api_status" = "200" ]; then
+        echo "   Status: Healthy (HTTP 200)"
+    else
+        echo "   Status: Unhealthy (HTTP $api_status)"
+    fi
     echo ""
 
     # Redis status
-    redis_mem=$(docker exec $REDIS_HOST redis-cli INFO memory 2>/dev/null | grep "used_memory_human" | cut -d: -f2 | tr -d '\r')
+    redis_mem=$(docker exec $REDIS_HOST redis-cli $REDIS_AUTH INFO memory 2>/dev/null | grep "used_memory_human" | cut -d: -f2 | tr -d '\r')
     echo "💾 Redis:"
     echo "   Memory usage: $redis_mem"
     echo ""
 
-    # Recent scan rate
-    echo "📈 Performance:"
-    completed_today=$(docker exec $REDIS_HOST redis-cli KEYS "*" 2>/dev/null | grep -c "^" || echo "0")
-    echo "   Total scans: $completed_today"
-    echo ""
-
-    # Load recommendation
-    if [ "$queue_size" -gt 20 ] && [ "$worker_count" -lt 6 ]; then
-        warning "High queue detected! Recommend scaling up workers."
+    # Recommendation
+    if [ "$queue_size" -gt 20 ] && [ "$batch_workers" -lt 6 ]; then
+        warning "High queue detected! Recommend scaling up batch workers."
         echo "   Run: $0 up"
-    elif [ "$queue_size" -eq 0 ] && [ "$worker_count" -gt 2 ]; then
+    elif [ "$queue_size" -eq 0 ] && [ "$batch_workers" -gt 2 ]; then
         warning "Queue empty. Consider scaling down to save resources."
         echo "   Run: $0 down"
     else
@@ -158,7 +181,6 @@ show_status() {
 #############################################################
 case "$1" in
     up)
-        # Scale up
         current=$(get_worker_count)
         new_count=$(($current + ${2:-2}))
         if [ "$new_count" -gt 10 ]; then
@@ -169,7 +191,6 @@ case "$1" in
         ;;
 
     down)
-        # Scale down
         current=$(get_worker_count)
         new_count=$(($current - ${2:-2}))
         if [ "$new_count" -lt 2 ]; then
@@ -180,7 +201,6 @@ case "$1" in
         ;;
 
     auto)
-        # Auto-scale based on queue
         auto_scale
         ;;
 
@@ -193,10 +213,10 @@ case "$1" in
         echo ""
         echo "Examples:"
         echo "  $0 status        - Show current status"
-        echo "  $0 up            - Add 2 workers"
-        echo "  $0 up 4          - Add 4 workers"
-        echo "  $0 down          - Remove 2 workers"
-        echo "  $0 down 2        - Remove 2 workers"
+        echo "  $0 up            - Add 2 batch workers"
+        echo "  $0 up 4          - Add 4 batch workers"
+        echo "  $0 down          - Remove 2 batch workers"
+        echo "  $0 down 2        - Remove 2 batch workers"
         echo "  $0 auto          - Auto-scale based on queue"
         echo ""
         exit 1

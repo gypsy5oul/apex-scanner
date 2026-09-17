@@ -11,6 +11,23 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+COMPOSE_DIR="/opt/new-grype-scanner-v1/app"
+COMPOSE_FILE="$COMPOSE_DIR/docker-compose.yml"
+
+# Load Redis password from .env if present
+if [ -f "$COMPOSE_DIR/.env" ]; then
+    REDIS_PASSWORD=$(grep -E '^REDIS_PASSWORD=' "$COMPOSE_DIR/.env" | cut -d'=' -f2- | tr -d '"'\''\r')
+fi
+
+# Detect active worker container
+WORKER_CONTAINER=""
+for candidate in app-worker-system-1 app-worker-high-1 app-worker-batch-1; do
+    if docker ps --format '{{.Names}}' | grep -q "^${candidate}$"; then
+        WORKER_CONTAINER="$candidate"
+        break
+    fi
+done
+
 echo "=========================================="
 echo "  Scanner Health Check"
 echo "=========================================="
@@ -20,11 +37,16 @@ echo ""
 # Check if containers are running
 #############################################################
 echo "📦 Container Status:"
-if docker-compose ps | grep -q "Up"; then
+COMPOSE_BIN="docker-compose"
+if ! command -v docker-compose &>/dev/null; then
+    COMPOSE_BIN="docker compose"
+fi
+
+if $COMPOSE_BIN -f "$COMPOSE_FILE" ps 2>/dev/null | grep -q "Up"; then
     echo -e "  ${GREEN}✅ All containers running${NC}"
 else
     echo -e "  ${RED}❌ Some containers are down${NC}"
-    docker-compose ps
+    $COMPOSE_BIN -f "$COMPOSE_FILE" ps
 fi
 echo ""
 
@@ -33,34 +55,44 @@ echo ""
 #############################################################
 echo "🔧 Scanner Versions:"
 
-# Grype
-GRYPE_VERSION=$(docker exec app-worker-1 grype version --output json 2>/dev/null | jq -r '.version' || echo "error")
-LATEST_GRYPE=$(curl -s https://api.github.com/repos/anchore/grype/releases/latest | jq -r '.tag_name' | sed 's/v//')
-
-if [ "$GRYPE_VERSION" = "$LATEST_GRYPE" ]; then
-    echo -e "  Grype:  ${GREEN}$GRYPE_VERSION (latest)${NC}"
+if [ -z "$WORKER_CONTAINER" ]; then
+    echo -e "  ${RED}❌ No active worker container found${NC}"
 else
-    echo -e "  Grype:  ${YELLOW}$GRYPE_VERSION (latest: $LATEST_GRYPE)${NC}"
-fi
+    # Grype
+    GRYPE_VERSION=$(docker exec "$WORKER_CONTAINER" grype version --output json 2>/dev/null | jq -r '.version' || echo "error")
+    LATEST_GRYPE=$(curl -s https://api.github.com/repos/anchore/grype/releases/latest | jq -r '.tag_name' 2>/dev/null | sed 's/v//' || echo "")
 
-# Trivy
-TRIVY_VERSION=$(docker exec app-worker-1 trivy --version 2>/dev/null | grep -oP 'Version: \K[0-9.]+' || echo "error")
-LATEST_TRIVY=$(curl -s https://api.github.com/repos/aquasecurity/trivy/releases/latest | jq -r '.tag_name' | sed 's/v//')
+    if [ -n "$LATEST_GRYPE" ] && [ "$GRYPE_VERSION" = "$LATEST_GRYPE" ]; then
+        echo -e "  Grype:  ${GREEN}$GRYPE_VERSION (latest)${NC}"
+    elif [ -n "$LATEST_GRYPE" ]; then
+        echo -e "  Grype:  ${YELLOW}$GRYPE_VERSION (latest: $LATEST_GRYPE)${NC}"
+    else
+        echo -e "  Grype:  ${GREEN}$GRYPE_VERSION${NC}"
+    fi
 
-if [ "$TRIVY_VERSION" = "$LATEST_TRIVY" ]; then
-    echo -e "  Trivy:  ${GREEN}$TRIVY_VERSION (latest)${NC}"
-else
-    echo -e "  Trivy:  ${YELLOW}$TRIVY_VERSION (latest: $LATEST_TRIVY)${NC}"
-fi
+    # Trivy
+    TRIVY_VERSION=$(docker exec "$WORKER_CONTAINER" trivy --version 2>/dev/null | grep -oP 'Version: \K[0-9.]+' | head -n1 || echo "error")
+    LATEST_TRIVY=$(curl -s https://api.github.com/repos/aquasecurity/trivy/releases/latest | jq -r '.tag_name' 2>/dev/null | sed 's/v//' || echo "")
 
-# Syft
-SYFT_VERSION=$(docker exec app-worker-1 syft version --output json 2>/dev/null | jq -r '.version' || echo "error")
-LATEST_SYFT=$(curl -s https://api.github.com/repos/anchore/syft/releases/latest | jq -r '.tag_name' | sed 's/v//')
+    if [ -n "$LATEST_TRIVY" ] && [ "$TRIVY_VERSION" = "$LATEST_TRIVY" ]; then
+        echo -e "  Trivy:  ${GREEN}$TRIVY_VERSION (latest)${NC}"
+    elif [ -n "$LATEST_TRIVY" ]; then
+        echo -e "  Trivy:  ${YELLOW}$TRIVY_VERSION (latest: $LATEST_TRIVY)${NC}"
+    else
+        echo -e "  Trivy:  ${GREEN}$TRIVY_VERSION${NC}"
+    fi
 
-if [ "$SYFT_VERSION" = "$LATEST_SYFT" ]; then
-    echo -e "  Syft:   ${GREEN}$SYFT_VERSION (latest)${NC}"
-else
-    echo -e "  Syft:   ${YELLOW}$SYFT_VERSION (latest: $LATEST_SYFT)${NC}"
+    # Syft
+    SYFT_VERSION=$(docker exec "$WORKER_CONTAINER" syft version --output json 2>/dev/null | jq -r '.version' || echo "error")
+    LATEST_SYFT=$(curl -s https://api.github.com/repos/anchore/syft/releases/latest | jq -r '.tag_name' 2>/dev/null | sed 's/v//' || echo "")
+
+    if [ -n "$LATEST_SYFT" ] && [ "$SYFT_VERSION" = "$LATEST_SYFT" ]; then
+        echo -e "  Syft:   ${GREEN}$SYFT_VERSION (latest)${NC}"
+    elif [ -n "$LATEST_SYFT" ]; then
+        echo -e "  Syft:   ${YELLOW}$SYFT_VERSION (latest: $LATEST_SYFT)${NC}"
+    else
+        echo -e "  Syft:   ${GREEN}$SYFT_VERSION${NC}"
+    fi
 fi
 
 echo ""
@@ -70,40 +102,50 @@ echo ""
 #############################################################
 echo "🗄️  Vulnerability Database Status:"
 
-# Grype DB
-if docker exec app-worker-1 test -f /root/.cache/grype/db/6/vulnerability.db 2>/dev/null; then
-    GRYPE_DB_DATE=$(docker exec app-worker-1 stat -c %y /root/.cache/grype/db/6/vulnerability.db 2>/dev/null | cut -d' ' -f1)
-    GRYPE_DB_SIZE=$(docker exec app-worker-1 du -h /root/.cache/grype/db/6/vulnerability.db 2>/dev/null | cut -f1)
-    GRYPE_DB_AGE=$(( ($(date +%s) - $(docker exec app-worker-1 stat -c %Y /root/.cache/grype/db/6/vulnerability.db 2>/dev/null)) / 86400 ))
+if [ -n "$WORKER_CONTAINER" ]; then
+    # Grype DB
+    GRYPE_DB_PATH="/home/scanner/.cache/grype/db/6/vulnerability.db"
+    if docker exec "$WORKER_CONTAINER" test -f "$GRYPE_DB_PATH" 2>/dev/null; then
+        GRYPE_DB_DATE=$(docker exec "$WORKER_CONTAINER" stat -c %y "$GRYPE_DB_PATH" 2>/dev/null | cut -d' ' -f1)
+        GRYPE_DB_SIZE=$(docker exec "$WORKER_CONTAINER" du -h "$GRYPE_DB_PATH" 2>/dev/null | cut -f1)
+        GRYPE_DB_EPOCH=$(docker exec "$WORKER_CONTAINER" stat -c %Y "$GRYPE_DB_PATH" 2>/dev/null || echo "0")
+        NOW_EPOCH=$(date +%s)
+        GRYPE_DB_AGE=$(( (NOW_EPOCH - GRYPE_DB_EPOCH) / 86400 ))
 
-    if [ "$GRYPE_DB_AGE" -lt 2 ]; then
-        echo -e "  Grype DB:  ${GREEN}✅ Fresh (${GRYPE_DB_AGE} days old, ${GRYPE_DB_SIZE})${NC}"
-    elif [ "$GRYPE_DB_AGE" -lt 7 ]; then
-        echo -e "  Grype DB:  ${YELLOW}⚠️  ${GRYPE_DB_AGE} days old (${GRYPE_DB_SIZE})${NC}"
+        if [ "$GRYPE_DB_AGE" -lt 2 ]; then
+            echo -e "  Grype DB:  ${GREEN}✅ Fresh (${GRYPE_DB_AGE} days old, ${GRYPE_DB_SIZE})${NC}"
+        elif [ "$GRYPE_DB_AGE" -lt 7 ]; then
+            echo -e "  Grype DB:  ${YELLOW}⚠️  ${GRYPE_DB_AGE} days old (${GRYPE_DB_SIZE})${NC}"
+        else
+            echo -e "  Grype DB:  ${RED}❌ STALE (${GRYPE_DB_AGE} days old)${NC}"
+        fi
+        echo "             Last updated: $GRYPE_DB_DATE"
     else
-        echo -e "  Grype DB:  ${RED}❌ STALE (${GRYPE_DB_AGE} days old)${NC}"
+        echo -e "  Grype DB:  ${RED}❌ Not found at $GRYPE_DB_PATH${NC}"
     fi
-    echo "             Last updated: $GRYPE_DB_DATE"
-else
-    echo -e "  Grype DB:  ${RED}❌ Not found${NC}"
-fi
 
-# Trivy DB
-if docker exec app-worker-1 test -f /root/.cache/trivy/db/trivy.db 2>/dev/null; then
-    TRIVY_DB_DATE=$(docker exec app-worker-1 stat -c %y /root/.cache/trivy/db/trivy.db 2>/dev/null | cut -d' ' -f1)
-    TRIVY_DB_SIZE=$(docker exec app-worker-1 du -h /root/.cache/trivy/db/trivy.db 2>/dev/null | cut -f1)
-    TRIVY_DB_AGE=$(( ($(date +%s) - $(docker exec app-worker-1 stat -c %Y /root/.cache/trivy/db/trivy.db 2>/dev/null)) / 86400 ))
+    # Trivy DB
+    TRIVY_DB_PATH="/home/scanner/.cache/trivy/db/trivy.db"
+    if docker exec "$WORKER_CONTAINER" test -f "$TRIVY_DB_PATH" 2>/dev/null; then
+        TRIVY_DB_DATE=$(docker exec "$WORKER_CONTAINER" stat -c %y "$TRIVY_DB_PATH" 2>/dev/null | cut -d' ' -f1)
+        TRIVY_DB_SIZE=$(docker exec "$WORKER_CONTAINER" du -h "$TRIVY_DB_PATH" 2>/dev/null | cut -f1)
+        TRIVY_DB_EPOCH=$(docker exec "$WORKER_CONTAINER" stat -c %Y "$TRIVY_DB_PATH" 2>/dev/null || echo "0")
+        NOW_EPOCH=$(date +%s)
+        TRIVY_DB_AGE=$(( (NOW_EPOCH - TRIVY_DB_EPOCH) / 86400 ))
 
-    if [ "$TRIVY_DB_AGE" -lt 2 ]; then
-        echo -e "  Trivy DB:  ${GREEN}✅ Fresh (${TRIVY_DB_AGE} days old, ${TRIVY_DB_SIZE})${NC}"
-    elif [ "$TRIVY_DB_AGE" -lt 7 ]; then
-        echo -e "  Trivy DB:  ${YELLOW}⚠️  ${TRIVY_DB_AGE} days old (${TRIVY_DB_SIZE})${NC}"
+        if [ "$TRIVY_DB_AGE" -lt 2 ]; then
+            echo -e "  Trivy DB:  ${GREEN}✅ Fresh (${TRIVY_DB_AGE} days old, ${TRIVY_DB_SIZE})${NC}"
+        elif [ "$TRIVY_DB_AGE" -lt 7 ]; then
+            echo -e "  Trivy DB:  ${YELLOW}⚠️  ${TRIVY_DB_AGE} days old (${TRIVY_DB_SIZE})${NC}"
+        else
+            echo -e "  Trivy DB:  ${RED}❌ STALE (${TRIVY_DB_AGE} days old)${NC}"
+        fi
+        echo "             Last updated: $TRIVY_DB_DATE"
     else
-        echo -e "  Trivy DB:  ${RED}❌ STALE (${TRIVY_DB_AGE} days old)${NC}"
+        echo -e "  Trivy DB:  ${RED}❌ Not found at $TRIVY_DB_PATH${NC}"
     fi
-    echo "             Last updated: $TRIVY_DB_DATE"
 else
-    echo -e "  Trivy DB:  ${RED}❌ Not found${NC}"
+    echo -e "  ${RED}❌ Worker container not available to inspect DBs${NC}"
 fi
 
 echo ""
@@ -112,49 +154,26 @@ echo ""
 # Check API health
 #############################################################
 echo "🌐 API Status:"
-API_RESPONSE=$(curl -s http://10.0.2.121:7070/ || echo "error")
-if echo "$API_RESPONSE" | grep -q "Multi-Scanner"; then
-    echo -e "  ${GREEN}✅ API responding${NC}"
-    echo "     URL: http://10.0.2.121:7070"
+API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:7070/health 2>/dev/null || echo "000")
+if [ "$API_STATUS" = "200" ]; then
+    echo -e "  ${GREEN}✅ API healthy (HTTP 200)${NC}"
+    echo "     URL: http://127.0.0.1:7070/health"
 else
-    echo -e "  ${RED}❌ API not responding${NC}"
+    echo -e "  ${RED}❌ API not responding on http://127.0.0.1:7070/health (Status: $API_STATUS)${NC}"
 fi
 
 echo ""
 
 #############################################################
-# Check recent scans
+# Check Redis activity
 #############################################################
 echo "📊 Recent Activity:"
-SCAN_COUNT=$(docker exec redis_cache redis-cli DBSIZE 2>/dev/null | grep -oP '\d+' || echo "0")
-echo "  Total scans in database: $SCAN_COUNT"
-
-echo ""
-
-#############################################################
-# Recommendations
-#############################################################
-echo "💡 Recommendations:"
-
-if [ "$GRYPE_VERSION" != "$LATEST_GRYPE" ]; then
-    echo "  • Update Grype: Run /opt/new-grype-scanner-v1/update-scanners.sh"
+REDIS_AUTH=""
+if [ -n "$REDIS_PASSWORD" ]; then
+    REDIS_AUTH="-a $REDIS_PASSWORD"
 fi
-
-if [ "$TRIVY_VERSION" != "$LATEST_TRIVY" ]; then
-    echo "  • Update Trivy: Run /opt/new-grype-scanner-v1/update-scanners.sh"
-fi
-
-if [ "$SYFT_VERSION" != "$LATEST_SYFT" ]; then
-    echo "  • Update Syft: Run /opt/new-grype-scanner-v1/update-scanners.sh"
-fi
-
-if [ "$GRYPE_DB_AGE" -gt 7 ] || [ "$TRIVY_DB_AGE" -gt 7 ]; then
-    echo "  • Update databases: Run /opt/new-grype-scanner-v1/update-databases.sh"
-fi
-
-if [ "$GRYPE_VERSION" = "$LATEST_GRYPE" ] && [ "$TRIVY_VERSION" = "$LATEST_TRIVY" ] && [ "$GRYPE_DB_AGE" -lt 2 ] && [ "$TRIVY_DB_AGE" -lt 2 ]; then
-    echo -e "  ${GREEN}✅ Everything is up to date!${NC}"
-fi
+SCAN_COUNT=$(docker exec redis_cache redis-cli $REDIS_AUTH DBSIZE 2>/dev/null | grep -oP '\d+' || echo "0")
+echo "  Total keys in Redis: $SCAN_COUNT"
 
 echo ""
 echo "=========================================="

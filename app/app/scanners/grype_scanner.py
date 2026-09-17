@@ -27,17 +27,17 @@ class GrypeScanner(BaseScanner):
         if not ok:
             return ok, err
 
-        # Verify vulnerability DB is present and not stale
+        # Verify vulnerability DB is present and valid
         try:
             result = subprocess.run(
-                ["grype", "db", "check"],
+                ["grype", "db", "status"],
                 capture_output=True,
                 text=True,
                 timeout=15,
             )
             if result.returncode != 0:
                 self.logger.warning(
-                    f"Grype DB stale/missing ({result.stderr.strip()}), "
+                    f"Grype DB missing or invalid ({result.stderr.strip()}), "
                     "attempting automatic update..."
                 )
                 update = subprocess.run(

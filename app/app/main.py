@@ -7,6 +7,67 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
+import prometheus_fastapi_instrumentator.routing as _pfi_routing
+from starlette.routing import Match, Mount, Route
+
+# Patch prometheus_fastapi_instrumentator routing for FastAPI >=0.116 _IncludedRouter compatibility
+def _pfi_resolve_path(route):
+    if hasattr(route, "path"):
+        return route.path
+    include_context = getattr(route, "include_context", None)
+    if include_context is not None:
+        return getattr(include_context, "prefix", "") or ""
+    return None
+
+def _pfi_child_routes(route):
+    if isinstance(route, Mount):
+        return route.routes or None
+    original_router = getattr(route, "original_router", None)
+    if original_router is not None and hasattr(original_router, "routes"):
+        nested = list(original_router.routes)
+        return nested or None
+    return None
+
+def _pfi_strip_prefix_from_scope(scope, prefix):
+    if not prefix:
+        return scope
+    path = scope.get("path", "") or ""
+    if path == prefix:
+        return {**scope, "path": ""}
+    if path.startswith(prefix + "/"):
+        return {**scope, "path": path[len(prefix):]}
+    return scope
+
+def _pfi_safe_get_route_name(scope, routes, route_name=None):
+    for route in routes:
+        match, child_scope = route.matches(scope)
+        if match == Match.FULL:
+            resolved = _pfi_resolve_path(route)
+            if resolved is None:
+                continue
+            route_name = resolved
+            child_scope = {**scope, **child_scope}
+            children = _pfi_child_routes(route)
+            if children:
+                if not isinstance(route, Mount):
+                    include_context = getattr(route, "include_context", None)
+                    if include_context is not None:
+                        prefix = getattr(include_context, "prefix", "") or ""
+                        if prefix:
+                            child_scope = _pfi_strip_prefix_from_scope(child_scope, prefix)
+                child_route_name = _pfi_safe_get_route_name(child_scope, children)
+                if child_route_name is not None:
+                    route_name = route_name + child_route_name
+                else:
+                    route_name = None
+            return route_name
+        elif match == Match.PARTIAL and route_name is None:
+            resolved = _pfi_resolve_path(route)
+            if resolved is not None:
+                route_name = resolved
+    return None
+
+_pfi_routing._get_route_name = _pfi_safe_get_route_name
 
 from app.routes import router
 from app.routes_v2 import router_v2
