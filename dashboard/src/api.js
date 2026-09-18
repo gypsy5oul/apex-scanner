@@ -298,6 +298,16 @@ export const importVexDocument = (document) =>
 export const getVexEnrichedVulns = (scanId, filterNotAffected = false) =>
   apiV2.get(`/scan/${scanId}/vex-enriched`, { params: { filter_not_affected: filterNotAffected } });
 
+// Hardened Base Image Advisor
+export const diagnoseHardenedApp = (data) =>
+  apiV2.post('/hardened-images/advisor/diagnose', data);
+export const fetchGitLabDockerfile = (data) =>
+  apiV2.post('/hardened-images/advisor/fetch-gitlab', data);
+export const chatWithAdvisor = (data) =>
+  apiV2.post('/hardened-images/advisor/chat', data);
+export const getAdvisorImages = () =>
+  apiV2.get('/hardened-images/advisor/images');
+
 // WebSocket URL
 export const getWsUrl = (scanId) => {
   const host = window.location.hostname;
@@ -310,3 +320,4 @@ export const getGlobalWsUrl = () => {
 };
 
 export default api;
+

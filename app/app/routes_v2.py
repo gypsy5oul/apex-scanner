@@ -2904,3 +2904,113 @@ async def approved_base_images(
             status_code=502,
             detail=f"Could not load the approved base images catalog: {exc}",
         )
+
+
+# ============== Hardened Base Image Advisor & App Compatibility ==============
+
+class AdvisorDiagnoseRequest(BaseModel):
+    base_image: str = Field(..., description="Target hardened base image (e.g. jdk21, wildfly41-jre17, python314, etc.)")
+    dockerfile_content: str = Field(..., description="Application Dockerfile content to analyze")
+    build_error_logs: Optional[str] = Field(None, description="Optional build or container startup error logs")
+    gitlab_project: Optional[str] = Field(None, description="Optional GitLab project ID or path")
+    gitlab_ref: Optional[str] = Field(None, description="Optional GitLab branch/commit")
+
+
+class AdvisorFetchGitLabRequest(BaseModel):
+    project_target: str = Field(..., description="GitLab project URL, ID, or path with namespace (e.g. devops/my-app)")
+    file_path: Optional[str] = Field("Dockerfile", description="Path to file in repo (defaults to Dockerfile)")
+    ref: Optional[str] = Field(None, description="Git branch or commit ref (defaults to default branch)")
+    private_token: Optional[str] = Field(None, description="Optional personal access token (defaults to server token)")
+
+
+class AdvisorChatRequest(BaseModel):
+    session_id: str = Field(..., description="Session identifier for multi-turn conversation")
+    user_message: str = Field(..., description="User question or clarification")
+    base_image: Optional[str] = Field(None, description="Target hardened base image name")
+    dockerfile_content: Optional[str] = Field(None, description="Current application Dockerfile content")
+
+
+@router_v2.post(
+    "/hardened-images/advisor/diagnose",
+    summary="Diagnose App Dockerfile for Hardened Base Image Compatibility",
+    description="Analyzes an application Dockerfile against an approved hardened base image, "
+                "detects missing commands, entrypoints, permissions, and port conflicts, "
+                "and generates a production-ready remediated multi-stage Dockerfile without altering the base image.",
+    tags=["hardened-images-advisor"],
+)
+async def advisor_diagnose(
+    payload: AdvisorDiagnoseRequest,
+    _user: TokenData = Depends(get_current_user),
+):
+    from app.hardened_image_agent import HardenedImageAgent
+    try:
+        return await HardenedImageAgent.diagnose_and_remediate(
+            base_image=payload.base_image,
+            dockerfile_content=payload.dockerfile_content,
+            build_error_logs=payload.build_error_logs,
+            gitlab_project=payload.gitlab_project,
+            gitlab_ref=payload.gitlab_ref,
+        )
+    except Exception as exc:
+        logger.error("Hardened image advisor diagnosis failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=f"Diagnosis failed: {exc}")
+
+
+@router_v2.post(
+    "/hardened-images/advisor/fetch-gitlab",
+    summary="Fetch Application Dockerfile from GitLab",
+    description="Fetches Dockerfile or CI file directly from an application team GitLab repository.",
+    tags=["hardened-images-advisor"],
+)
+async def advisor_fetch_gitlab(
+    payload: AdvisorFetchGitLabRequest,
+    _user: TokenData = Depends(get_current_user),
+):
+    from app.hardened_image_agent import GitLabProjectFetcher
+    res = await GitLabProjectFetcher.fetch_file(
+        project_target=payload.project_target,
+        file_path=payload.file_path or "Dockerfile",
+        ref=payload.ref,
+        private_token=payload.private_token,
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Failed to fetch file from GitLab"))
+    return res
+
+
+@router_v2.post(
+    "/hardened-images/advisor/chat",
+    summary="Interactive Chat with Hardened Image Advisor",
+    description="Multi-turn conversational assistance for application developers migrating to hardened images.",
+    tags=["hardened-images-advisor"],
+)
+async def advisor_chat(
+    payload: AdvisorChatRequest,
+    _user: TokenData = Depends(get_current_user),
+):
+    from app.hardened_image_agent import HardenedImageAgent
+    try:
+        return await HardenedImageAgent.chat(
+            session_id=payload.session_id,
+            user_message=payload.user_message,
+            base_image=payload.base_image,
+            dockerfile_content=payload.dockerfile_content,
+        )
+    except Exception as exc:
+        logger.error("Hardened image advisor chat failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=f"Chat failed: {exc}")
+
+
+@router_v2.get(
+    "/hardened-images/advisor/images",
+    summary="List Hardened Base Images for Advisor",
+    description="Returns available approved hardened base images with metadata for the migration advisor.",
+    tags=["hardened-images-advisor"],
+)
+async def advisor_list_images(
+    _user: TokenData = Depends(get_current_user),
+):
+    from app.hardened_image_agent import HardenedCatalogService
+    images = HardenedCatalogService.get_all_images()
+    return {"images": images, "total": len(images)}
+

@@ -31,6 +31,7 @@ import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import GavelIcon from '@mui/icons-material/Gavel';
 import VerifiedIcon from '@mui/icons-material/Verified';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import ApexLogo from './ApexLogo';
 import { useAuth } from '../context/AuthContext';
 
@@ -42,7 +43,9 @@ const mainMenuItems = [
   { text: 'Batch Results', icon: <FactCheckIcon />, path: '/batches' },
   { text: 'Scan History', icon: <HistoryIcon />, path: '/history' },
   { text: 'Approved Base Images', icon: <VerifiedIcon />, path: '/approved-base-images' },
+  { text: 'App Migration Advisor', icon: <AutoFixHighIcon />, path: '/hardened-image-advisor' },
 ];
+
 
 const analysisMenuItems = [
   { text: 'Compare Scans', icon: <CompareIcon />, path: '/compare' },
