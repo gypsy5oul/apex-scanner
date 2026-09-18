@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Paper,
@@ -22,6 +23,8 @@ import {
   Collapse,
   Button,
 } from '@mui/material';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
+
 import SearchIcon from '@mui/icons-material/Search';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -136,12 +139,25 @@ function PanelField({ label, children }) {
 
 // What actually changed vs the vendor image this base replaces. This is the
 // "will my Dockerfile still build?" answer, so removals are the headline.
-function ChangesPanel({ changes }) {
+function ChangesPanel({ changes, imageName, onDiagnose }) {
   if (!changes || typeof changes !== 'object') {
     return (
-      <Typography variant="body2" color="text.disabled">
-        No change details published for this image.
-      </Typography>
+      <Box>
+        <Typography variant="body2" color="text.disabled" sx={{ mb: 1 }}>
+          No change details published for this image.
+        </Typography>
+        {imageName && onDiagnose && (
+          <Button
+            variant="outlined"
+            color="primary"
+            size="small"
+            startIcon={<AutoFixHighIcon />}
+            onClick={() => onDiagnose(imageName)}
+          >
+            Diagnose App Dockerfile for {imageName}
+          </Button>
+        )}
+      </Box>
     );
   }
 
@@ -151,74 +167,89 @@ function ChangesPanel({ changes }) {
   const hints = Array.isArray(changes.migration_hints) ? changes.migration_hints : [];
 
   return (
-    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 3 }}>
-      <Box>
-        {Array.isArray(changes.replaces) && changes.replaces.length > 0 && (
-          <PanelField label="Replaces">
-            <TokenChips items={changes.replaces} />
-          </PanelField>
-        )}
-        {changes.base_os && (
-          <PanelField label="Base OS">
-            <Typography variant="body2" sx={{ fontFamily: MONO_FONT, fontSize: '0.8rem' }}>
-              {changes.base_os}
-            </Typography>
-          </PanelField>
-        )}
-        {Array.isArray(changes.available_commands) && changes.available_commands.length > 0 && (
-          <PanelField label="Commands still available">
-            <TokenChips items={changes.available_commands} color="success" />
-          </PanelField>
-        )}
-        {Array.isArray(changes.adds_back) && changes.adds_back.length > 0 && (
-          <PanelField label="Added back">
-            <TokenChips items={changes.adds_back} color="info" />
-          </PanelField>
-        )}
-        {typeof changes.rpm_package_count === 'number' && (
-          <PanelField label="RPM packages">
-            <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-              {changes.rpm_package_count}
-            </Typography>
-          </PanelField>
-        )}
+    <Box>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 3 }}>
+        <Box>
+          {Array.isArray(changes.replaces) && changes.replaces.length > 0 && (
+            <PanelField label="Replaces">
+              <TokenChips items={changes.replaces} />
+            </PanelField>
+          )}
+          {changes.base_os && (
+            <PanelField label="Base OS">
+              <Typography variant="body2" sx={{ fontFamily: MONO_FONT, fontSize: '0.8rem' }}>
+                {changes.base_os}
+              </Typography>
+            </PanelField>
+          )}
+          {Array.isArray(changes.available_commands) && changes.available_commands.length > 0 && (
+            <PanelField label="Commands still available">
+              <TokenChips items={changes.available_commands} color="success" />
+            </PanelField>
+          )}
+          {Array.isArray(changes.adds_back) && changes.adds_back.length > 0 && (
+            <PanelField label="Added back">
+              <TokenChips items={changes.adds_back} color="info" />
+            </PanelField>
+          )}
+          {typeof changes.rpm_package_count === 'number' && (
+            <PanelField label="RPM packages">
+              <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                {changes.rpm_package_count}
+              </Typography>
+            </PanelField>
+          )}
+        </Box>
+
+        <Box>
+          {removed.length > 0 && (
+            <PanelField label="Removed — not installable on micro bases">
+              <Stack spacing={1}>
+                {removed.map(([category, items]) => (
+                  <Box key={category}>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.25 }}>
+                      {humanizeCategory(category)}
+                    </Typography>
+                    <TokenChips items={items} color="error" />
+                  </Box>
+                ))}
+              </Stack>
+            </PanelField>
+          )}
+          {changes.note && (
+            <PanelField label="Note">
+              <Typography variant="body2" color="text.secondary">{changes.note}</Typography>
+            </PanelField>
+          )}
+          {hints.length > 0 && (
+            <PanelField label="Migration hints">
+              <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2 }}>
+                {hints.map((h) => (
+                  <Typography key={h} component="li" variant="body2" color="text.secondary">{h}</Typography>
+                ))}
+              </Stack>
+            </PanelField>
+          )}
+        </Box>
       </Box>
 
-      <Box>
-        {removed.length > 0 && (
-          <PanelField label="Removed — not installable on micro bases">
-            <Stack spacing={1}>
-              {removed.map(([category, items]) => (
-                <Box key={category}>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.25 }}>
-                    {humanizeCategory(category)}
-                  </Typography>
-                  <TokenChips items={items} color="error" />
-                </Box>
-              ))}
-            </Stack>
-          </PanelField>
-        )}
-        {changes.note && (
-          <PanelField label="Note">
-            <Typography variant="body2" color="text.secondary">{changes.note}</Typography>
-          </PanelField>
-        )}
-        {/* Only rendered when the backend could NOT hoist these to the top
-            level, i.e. the producer made them genuinely per-image. */}
-        {hints.length > 0 && (
-          <PanelField label="Migration hints">
-            <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2 }}>
-              {hints.map((h) => (
-                <Typography key={h} component="li" variant="body2" color="text.secondary">{h}</Typography>
-              ))}
-            </Stack>
-          </PanelField>
-        )}
-      </Box>
+      {imageName && onDiagnose && (
+        <Box sx={{ mt: 2.5, pt: 1.5, borderTop: 1, borderColor: 'divider' }}>
+          <Button
+            variant="outlined"
+            color="primary"
+            size="small"
+            startIcon={<AutoFixHighIcon />}
+            onClick={() => onDiagnose(imageName)}
+          >
+            Diagnose App Dockerfile for {imageName}
+          </Button>
+        </Box>
+      )}
     </Box>
   );
 }
+
 
 const ACCESSORS = {
   name: (r) => r.name || '',
@@ -230,6 +261,7 @@ const ACCESSORS = {
 
 function ApprovedBaseImages() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -304,15 +336,26 @@ function ApprovedBaseImages() {
         title="Approved Base Images"
         description="Hardened, Apex-verified base images approved for use. Pull from the internal registry below."
         actions={
-          <Tooltip title="Re-fetch the latest catalog from source">
-            <span>
-              <IconButton onClick={() => load(true)} disabled={refreshing} aria-label="Refresh catalog" sx={{ bgcolor: 'action.hover' }}>
-                <RefreshIcon sx={refreshing ? { animation: 'spin 1s linear infinite', '@keyframes spin': { to: { transform: 'rotate(360deg)' } } } : undefined} />
-              </IconButton>
-            </span>
-          </Tooltip>
+          <Stack direction="row" spacing={1.5} alignItems="center">
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<AutoFixHighIcon />}
+              onClick={() => navigate('/hardened-image-advisor')}
+            >
+              App Migration Advisor
+            </Button>
+            <Tooltip title="Re-fetch the latest catalog from source">
+              <span>
+                <IconButton onClick={() => load(true)} disabled={refreshing} aria-label="Refresh catalog" sx={{ bgcolor: 'action.hover' }}>
+                  <RefreshIcon sx={refreshing ? { animation: 'spin 1s linear infinite', '@keyframes spin': { to: { transform: 'rotate(360deg)' } } } : undefined} />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
         }
       />
+
 
       {/* Catalog context */}
       {data && (
@@ -476,24 +519,41 @@ function ApprovedBaseImages() {
                     </TableCell>
                     <TableCell><Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>{img.scanned_on || '—'}</Typography></TableCell>
                     <TableCell align="center">
-                      {img.report_url ? (
-                        <Tooltip title="View scan report">
-                          <IconButton size="small" component={Link} href={img.report_url} target="_blank" rel="noopener noreferrer" aria-label={`Open scan report for ${img.name}`}>
-                            <OpenInNewIcon sx={{ fontSize: 18 }} />
+                      <Stack direction="row" spacing={0.5} justifyContent="center" alignItems="center">
+                        <Tooltip title={`Diagnose App Dockerfile for ${img.name}`}>
+                          <IconButton
+                            size="small"
+                            color="primary"
+                            onClick={() => navigate(`/hardened-image-advisor?base=${img.name}`)}
+                            aria-label={`Diagnose Dockerfile for ${img.name}`}
+                          >
+                            <AutoFixHighIcon sx={{ fontSize: 18 }} />
                           </IconButton>
                         </Tooltip>
-                      ) : <Typography variant="caption" color="text.disabled">—</Typography>}
+                        {img.report_url ? (
+                          <Tooltip title="View scan report">
+                            <IconButton size="small" component={Link} href={img.report_url} target="_blank" rel="noopener noreferrer" aria-label={`Open scan report for ${img.name}`}>
+                              <OpenInNewIcon sx={{ fontSize: 18 }} />
+                            </IconButton>
+                          </Tooltip>
+                        ) : <Typography variant="caption" color="text.disabled">—</Typography>}
+                      </Stack>
                     </TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell colSpan={8} sx={{ py: 0, ...(isOpen ? {} : { border: 0 }) }}>
                       <Collapse in={isOpen} timeout="auto" unmountOnExit>
                         <Box sx={{ py: 2.5, px: 2 }}>
-                          <ChangesPanel changes={img.changes} />
+                          <ChangesPanel
+                            changes={img.changes}
+                            imageName={img.name}
+                            onDiagnose={(name) => navigate(`/hardened-image-advisor?base=${name}`)}
+                          />
                         </Box>
                       </Collapse>
                     </TableCell>
                   </TableRow>
+
                   </React.Fragment>
                   );
                 })

@@ -30,6 +30,7 @@ import Policies from './pages/Policies';
 import Compliance from './pages/Compliance';
 import DependencyGraph from './pages/DependencyGraph';
 import VexManagement from './pages/VexManagement';
+import HardenedImageAdvisor from './pages/HardenedImageAdvisor';
 
 const drawerWidth = 280;
 
@@ -107,6 +108,7 @@ function AppRoutes() {
         <Route path="/history" element={<History />} />
         <Route path="/iac-scan" element={<IacScan />} />
         <Route path="/approved-base-images" element={<ApprovedBaseImages />} />
+        <Route path="/hardened-image-advisor" element={<HardenedImageAdvisor />} />
 
         {/* Admin-Only Routes — analysis & management */}
         <Route path="/compare" element={
